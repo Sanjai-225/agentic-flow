@@ -1,227 +1,90 @@
-import React, { memo } from "react";
-import { Handle, Position, NodeProps, Node } from "@xyflow/react";
-import { CustomNodeData } from "@/types/workflow";
-import {
-  Zap,
-  Bot,
-  GitBranch,
-  Wrench,
-  Cpu,
-  Send,
-  Database,
-  Box,
-  Layers,
-} from "lucide-react";
+'use client';
 
-export type CustomNodeType = Node<CustomNodeData, "custom">;
+import { memo } from 'react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { CustomNodeData } from '@/types/workflow';
 
-// Color & icon mapping helper for dynamic node types
-function getNodeTypeTheme(typeStr: string) {
-  const t = (typeStr || "").toLowerCase().trim();
+const NODE_COLORS: Record<string, { bg: string; border: string; badge: string; badgeText: string }> = {
+  trigger:        { bg: '#fefce8', border: '#eab308', badge: '#fef08a', badgeText: '#854d0e' },
+  webhook:        { bg: '#fefce8', border: '#eab308', badge: '#fef08a', badgeText: '#854d0e' },
+  schedule:       { bg: '#fefce8', border: '#eab308', badge: '#fef08a', badgeText: '#854d0e' },
+  input:          { bg: '#fefce8', border: '#eab308', badge: '#fef08a', badgeText: '#854d0e' },
+  llm_agent:      { bg: '#f5f3ff', border: '#8b5cf6', badge: '#ede9fe', badgeText: '#5b21b6' },
+  llm:            { bg: '#f5f3ff', border: '#8b5cf6', badge: '#ede9fe', badgeText: '#5b21b6' },
+  ai_processing:  { bg: '#f5f3ff', border: '#8b5cf6', badge: '#ede9fe', badgeText: '#5b21b6' },
+  condition:      { bg: '#fff7ed', border: '#f97316', badge: '#ffedd5', badgeText: '#9a3412' },
+  decision:       { bg: '#fff7ed', border: '#f97316', badge: '#ffedd5', badgeText: '#9a3412' },
+  branch:         { bg: '#fff7ed', border: '#f97316', badge: '#ffedd5', badgeText: '#9a3412' },
+  database_query: { bg: '#ecfdf5', border: '#10b981', badge: '#d1fae5', badgeText: '#065f46' },
+  database:       { bg: '#ecfdf5', border: '#10b981', badge: '#d1fae5', badgeText: '#065f46' },
+  api_call:       { bg: '#eff6ff', border: '#3b82f6', badge: '#dbeafe', badgeText: '#1e40af' },
+  api:            { bg: '#eff6ff', border: '#3b82f6', badge: '#dbeafe', badgeText: '#1e40af' },
+  notification:   { bg: '#fdf2f8', border: '#ec4899', badge: '#fce7f3', badgeText: '#9d174d' },
+  email:          { bg: '#fdf2f8', border: '#ec4899', badge: '#fce7f3', badgeText: '#9d174d' },
+  approval:       { bg: '#fdf4ff', border: '#d946ef', badge: '#fae8ff', badgeText: '#86198f' },
+  transform:      { bg: '#f0fdfa', border: '#14b8a6', badge: '#ccfbf1', badgeText: '#115e59' },
+  output:         { bg: '#eef2ff', border: '#4f46e5', badge: '#e0e7ff', badgeText: '#3730a3' },
+  end:            { bg: '#eef2ff', border: '#4f46e5', badge: '#e0e7ff', badgeText: '#3730a3' },
+};
 
-  if (t.includes("trigger") || t.includes("start") || t.includes("event") || t.includes("webhook")) {
-    return {
-      border: "border-emerald-500/50 hover:border-emerald-400",
-      accent: "bg-emerald-500",
-      badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-      glow: "shadow-emerald-500/10",
-      icon: Zap,
-    };
-  }
+const DEFAULT_COLORS = { bg: '#f8fafc', border: '#94a3b8', badge: '#f1f5f9', badgeText: '#475569' };
 
-  if (t.includes("llm") || t.includes("ai") || t.includes("agent") || t.includes("model") || t.includes("prompt") || t.includes("generate")) {
-    return {
-      border: "border-purple-500/50 hover:border-purple-400",
-      accent: "bg-purple-500",
-      badge: "bg-purple-500/15 text-purple-300 border-purple-500/30",
-      glow: "shadow-purple-500/10",
-      icon: Bot,
-    };
-  }
-
-  if (t.includes("condition") || t.includes("decision") || t.includes("branch") || t.includes("router") || t.includes("switch") || t.includes("filter")) {
-    return {
-      border: "border-amber-500/50 hover:border-amber-400",
-      accent: "bg-amber-500",
-      badge: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-      glow: "shadow-amber-500/10",
-      icon: GitBranch,
-    };
-  }
-
-  if (t.includes("action") || t.includes("tool") || t.includes("api") || t.includes("integration") || t.includes("http")) {
-    return {
-      border: "border-cyan-500/50 hover:border-cyan-400",
-      accent: "bg-cyan-500",
-      badge: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
-      glow: "shadow-cyan-500/10",
-      icon: Wrench,
-    };
-  }
-
-  if (t.includes("process") || t.includes("transform") || t.includes("compute") || t.includes("parse") || t.includes("format")) {
-    return {
-      border: "border-blue-500/50 hover:border-blue-400",
-      accent: "bg-blue-500",
-      badge: "bg-blue-500/15 text-blue-300 border-blue-500/30",
-      glow: "shadow-blue-500/10",
-      icon: Cpu,
-    };
-  }
-
-  if (t.includes("output") || t.includes("end") || t.includes("notify") || t.includes("notification") || t.includes("email") || t.includes("response")) {
-    return {
-      border: "border-rose-500/50 hover:border-rose-400",
-      accent: "bg-rose-500",
-      badge: "bg-rose-500/15 text-rose-300 border-rose-500/30",
-      glow: "shadow-rose-500/10",
-      icon: Send,
-    };
-  }
-
-  if (t.includes("db") || t.includes("database") || t.includes("store") || t.includes("memory") || t.includes("cache")) {
-    return {
-      border: "border-teal-500/50 hover:border-teal-400",
-      accent: "bg-teal-500",
-      badge: "bg-teal-500/15 text-teal-300 border-teal-500/30",
-      glow: "shadow-teal-500/10",
-      icon: Database,
-    };
-  }
-
-  // Fallback for any unknown / custom node type
-  return {
-    border: "border-slate-700 hover:border-slate-500",
-    accent: "bg-slate-500",
-    badge: "bg-slate-800 text-slate-300 border-slate-700",
-    glow: "shadow-slate-500/5",
-    icon: Box,
-  };
+function getColors(type: string) {
+  const key = type.toLowerCase().replace(/[-\s]/g, '_');
+  return NODE_COLORS[key] || DEFAULT_COLORS;
 }
 
-export const CustomNode = memo(({ data }: NodeProps<CustomNodeType>) => {
-  const nodeData = (data || {}) as CustomNodeData;
-  const {
-    label = "Untitled Node",
-    nodeType = "node",
-    description = "",
-    tool,
-    isStart,
-    isEnd,
-    config,
-  } = nodeData;
-
-  const theme = getNodeTypeTheme(nodeType);
-  const IconComponent = theme.icon;
-
-  const configKeys = config ? Object.keys(config) : [];
+function CustomNode({ data }: NodeProps) {
+  const d = data as unknown as CustomNodeData;
+  const colors = getColors(d.nodeType);
+  const desc = d.description?.length > 80 ? d.description.slice(0, 80) + '…' : d.description;
 
   return (
     <div
-      className={`group relative rounded-xl border bg-slate-900/95 p-4 shadow-xl transition-all duration-200 w-80 text-slate-100 ${theme.border} ${theme.glow}`}
+      className="relative min-w-[220px] max-w-[280px] rounded-xl shadow-sm border-2 transition-shadow hover:shadow-md"
+      style={{ background: colors.bg, borderColor: colors.border }}
     >
-      {/* Input / Target Handle */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!w-3.5 !h-3.5 !bg-indigo-400 !border-2 !border-slate-950 !-top-2 hover:!scale-125 transition-transform"
-      />
+      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !border-2 !border-white" style={{ background: colors.border }} />
 
-      {/* Top accent bar */}
-      <div
-        className={`absolute top-0 left-4 right-4 h-0.5 rounded-full ${theme.accent}`}
-      />
-
-      {/* Header: Icon + Type Badge + Start/End indicator */}
-      <div className="flex items-center justify-between gap-2 mb-2.5">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="p-1.5 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-200">
-            <IconComponent className="w-4 h-4" />
-          </div>
+      <div className="px-3.5 py-3">
+        {/* Type badge + tool */}
+        <div className="flex items-center justify-between gap-2 mb-1.5">
           <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize truncate max-w-[140px] ${theme.badge}`}
-            title={nodeType}
+            className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full"
+            style={{ background: colors.badge, color: colors.badgeText }}
           >
-            {nodeType}
+            {d.nodeType}
           </span>
-        </div>
-
-        {/* Start / End badge if applicable */}
-        <div className="flex items-center gap-1 shrink-0">
-          {isStart && (
-            <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-              Start
-            </span>
-          )}
-          {isEnd && (
-            <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30">
-              End
+          {d.tool && (
+            <span className="text-[10px] text-[var(--text-muted)] flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+              {d.tool.name}
             </span>
           )}
         </div>
-      </div>
 
-      {/* Node Label */}
-      <h3 className="font-semibold text-sm text-slate-100 mb-1 leading-snug tracking-tight">
-        {label}
-      </h3>
+        {/* Label */}
+        <h3 className="text-sm font-semibold text-[var(--text-primary)] leading-tight mb-1">{d.label}</h3>
 
-      {/* Description */}
-      {description && (
-        <p
-          className="text-xs text-slate-400 line-clamp-3 mb-2 leading-relaxed"
-          title={description}
-        >
-          {description}
-        </p>
-      )}
+        {/* Description */}
+        {desc && <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{desc}</p>}
 
-      {/* Tool / Integration Badge */}
-      {tool && (
-        <div className="mt-2.5 pt-2 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-300">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Wrench className="w-3 h-3 text-cyan-400 shrink-0" />
-            <span className="font-medium text-cyan-200 truncate">
-              {tool.name}
-            </span>
-            {tool.operation && (
-              <span className="text-slate-400 truncate">
-                ({tool.operation})
-              </span>
+        {/* Start/End badge */}
+        {(d.isStart || d.isEnd) && (
+          <div className="mt-2 flex gap-1">
+            {d.isStart && (
+              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-green-100 text-green-700">START</span>
+            )}
+            {d.isEnd && (
+              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">END</span>
             )}
           </div>
-          <span
-            className={`text-[10px] px-1.5 py-0.2 rounded border font-mono shrink-0 ml-1 ${
-              tool.status === "connected"
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                : "bg-slate-800 text-slate-400 border-slate-700"
-            }`}
-          >
-            {tool.status || "not_connected"}
-          </span>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Config parameters hint (if any) */}
-      {configKeys.length > 0 && !tool && (
-        <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center gap-1 text-[11px] text-slate-400">
-          <Layers className="w-3 h-3 text-slate-500" />
-          <span className="truncate">
-            Config: {configKeys.slice(0, 3).join(", ")}
-            {configKeys.length > 3 ? ` +${configKeys.length - 3}` : ""}
-          </span>
-        </div>
-      )}
-
-      {/* Output / Source Handle */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!w-3.5 !h-3.5 !bg-indigo-400 !border-2 !border-slate-950 !-bottom-2 hover:!scale-125 transition-transform"
-      />
+      <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !border-2 !border-white" style={{ background: colors.border }} />
     </div>
   );
-});
+}
 
-CustomNode.displayName = "CustomNode";
-export default CustomNode;
+export default memo(CustomNode);

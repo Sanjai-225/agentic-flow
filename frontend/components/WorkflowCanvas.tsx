@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import React, { useEffect, useMemo, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -9,326 +9,209 @@ import {
   BackgroundVariant,
   useNodesState,
   useEdgesState,
-  useReactFlow,
-  ReactFlowProvider,
-  Node,
-  Edge,
-  MarkerType,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+  type Node,
+  type Edge,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 
-import { WorkflowResponse, WorkflowNode, WorkflowEdge, CustomNodeData } from "@/types/workflow";
-import CustomNode from "@/components/CustomNode";
-
-const nodeTypes = {
-  custom: CustomNode,
-};
+import CustomNode from './CustomNode';
+import { WorkflowResponse, CustomNodeData } from '@/types/workflow';
 
 interface WorkflowCanvasProps {
   workflow: WorkflowResponse | null;
-  onFitViewTrigger?: (trigger: () => void) => void;
 }
 
-/**
- * Calculates a hierarchical top-to-bottom layout with horizontal branch spreading
- */
-function calculateLayout(
-  rawNodes: WorkflowNode[],
-  rawEdges: WorkflowEdge[],
-  startNodeIds: string[] = [],
-  endNodeIds: string[] = []
-): { nodes: Node<CustomNodeData>[]; edges: Edge[] } {
-  if (!rawNodes || rawNodes.length === 0) {
-    return { nodes: [], edges: [] };
-  }
+const nodeTypes = { custom: CustomNode };
 
-  const nodeMap = new Map<string, WorkflowNode>();
-  rawNodes.forEach((n) => nodeMap.set(n.id, n));
+/**
+ * Auto-layout: topological sort with BFS, branching spread horizontally.
+ */
+function computeLayout(workflow: WorkflowResponse): { nodes: Node[]; edges: Edge[] } {
+  const X_GAP = 320;
+  const Y_GAP = 160;
 
   // Build adjacency
-  const childrenMap = new Map<string, string[]>();
-  const parentMap = new Map<string, string[]>();
-  const inDegree = new Map<string, number>();
+  const children: Record<string, string[]> = {};
+  const parentCount: Record<string, number> = {};
 
-  rawNodes.forEach((n) => {
-    childrenMap.set(n.id, []);
-    parentMap.set(n.id, []);
-    inDegree.set(n.id, 0);
+  workflow.nodes.forEach((n) => {
+    children[n.id] = [];
+    parentCount[n.id] = 0;
+  });
+  workflow.edges.forEach((e) => {
+    if (children[e.source]) children[e.source].push(e.target);
+    parentCount[e.target] = (parentCount[e.target] || 0) + 1;
   });
 
-  rawEdges.forEach((e) => {
-    if (nodeMap.has(e.source) && nodeMap.has(e.target)) {
-      childrenMap.get(e.source)!.push(e.target);
-      parentMap.get(e.target)!.push(e.source);
-      inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
-    }
-  });
-
-  // Identify roots
-  let roots: string[] = [];
-  if (startNodeIds && startNodeIds.length > 0) {
-    roots = startNodeIds.filter((id) => nodeMap.has(id));
-  }
-  if (roots.length === 0) {
-    roots = rawNodes.filter((n) => (inDegree.get(n.id) || 0) === 0).map((n) => n.id);
-  }
-  if (roots.length === 0) {
-    roots = [rawNodes[0].id];
-  }
-
-  // BFS / Longest path level calculation
-  const rankMap = new Map<string, number>();
-  const queue: { id: string; rank: number }[] = [];
-  const visited = new Set<string>();
-
-  roots.forEach((rootId) => {
-    rankMap.set(rootId, 0);
-    queue.push({ id: rootId, rank: 0 });
-    visited.add(rootId);
-  });
+  // BFS from start nodes
+  const levels: Record<string, number> = {};
+  const queue: string[] = [...workflow.start_nodes];
+  queue.forEach((id) => (levels[id] = 0));
 
   while (queue.length > 0) {
-    const { id, rank } = queue.shift()!;
-    const children = childrenMap.get(id) || [];
-    for (const childId of children) {
-      const nextRank = rank + 1;
-      const currentRank = rankMap.get(childId) ?? -1;
-      if (nextRank > currentRank) {
-        rankMap.set(childId, nextRank);
+    const current = queue.shift()!;
+    const nextLevel = (levels[current] ?? 0) + 1;
+    for (const child of children[current] || []) {
+      if (levels[child] === undefined || nextLevel > levels[child]) {
+        levels[child] = nextLevel;
       }
-      if (!visited.has(childId)) {
-        visited.add(childId);
-        queue.push({ id: childId, rank: nextRank });
+      parentCount[child]--;
+      if (parentCount[child] <= 0) {
+        queue.push(child);
       }
     }
   }
 
-  // Assign rank for unconnected nodes
-  let maxRank = 0;
-  rankMap.forEach((r) => {
-    if (r > maxRank) maxRank = r;
+  // Assign remaining unvisited nodes
+  workflow.nodes.forEach((n) => {
+    if (levels[n.id] === undefined) levels[n.id] = 0;
   });
 
-  rawNodes.forEach((n) => {
-    if (!rankMap.has(n.id)) {
-      maxRank += 1;
-      rankMap.set(n.id, maxRank);
-    }
+  // Group by level
+  const levelGroups: Record<number, string[]> = {};
+  Object.entries(levels).forEach(([id, level]) => {
+    if (!levelGroups[level]) levelGroups[level] = [];
+    levelGroups[level].push(id);
   });
 
-  // Group nodes by rank
-  const ranks: Map<number, string[]> = new Map();
-  rawNodes.forEach((n) => {
-    const r = rankMap.get(n.id) || 0;
-    if (!ranks.has(r)) ranks.set(r, []);
-    ranks.get(r)!.push(n.id);
-  });
+  // Position nodes
+  const nodeMap = new Map(workflow.nodes.map((n) => [n.id, n]));
+  const startSet = new Set(workflow.start_nodes);
+  const endSet = new Set(workflow.end_nodes);
 
-  const sortedRankKeys = Array.from(ranks.keys()).sort((a, b) => a - b);
+  const flowNodes: Node[] = [];
+  Object.entries(levelGroups).forEach(([levelStr, ids]) => {
+    const level = parseInt(levelStr);
+    const totalWidth = (ids.length - 1) * X_GAP;
+    const startX = -totalWidth / 2;
 
-  // Spacing
-  const VERTICAL_SPACING = 240;
-  const HORIZONTAL_SPACING = 360;
-
-  const positions = new Map<string, { x: number; y: number }>();
-
-  sortedRankKeys.forEach((rankKey) => {
-    const nodeIdsInRank = ranks.get(rankKey)!;
-
-    // Sort nodes in this rank by parents' average X to minimize crossings
-    if (rankKey > 0) {
-      nodeIdsInRank.sort((a, b) => {
-        const parentsA = parentMap.get(a) || [];
-        const parentsB = parentMap.get(b) || [];
-        const avgXA =
-          parentsA.length > 0
-            ? parentsA.reduce((sum, p) => sum + (positions.get(p)?.x || 0), 0) / parentsA.length
-            : 0;
-        const avgXB =
-          parentsB.length > 0
-            ? parentsB.reduce((sum, p) => sum + (positions.get(p)?.x || 0), 0) / parentsB.length
-            : 0;
-        return avgXA - avgXB;
+    ids.forEach((id, idx) => {
+      const n = nodeMap.get(id);
+      if (!n) return;
+      flowNodes.push({
+        id: n.id,
+        type: 'custom',
+        position: { x: startX + idx * X_GAP, y: level * Y_GAP },
+        data: {
+          id: n.id,
+          label: n.label,
+          nodeType: n.type,
+          description: n.description,
+          config: n.config,
+          tool: n.tool,
+          isStart: startSet.has(n.id),
+          isEnd: endSet.has(n.id),
+        } as CustomNodeData,
       });
-    }
-
-    const count = nodeIdsInRank.length;
-    nodeIdsInRank.forEach((id, index) => {
-      const xOffset = (index - (count - 1) / 2) * HORIZONTAL_SPACING;
-      const yOffset = rankKey * VERTICAL_SPACING + 80;
-      positions.set(id, { x: xOffset, y: yOffset });
     });
   });
 
-  const rfNodes: Node<CustomNodeData>[] = rawNodes.map((n) => {
-    const pos = positions.get(n.id) || { x: 0, y: 0 };
-    return {
-      id: n.id,
-      type: "custom",
-      position: pos,
-      data: {
-        id: n.id,
-        label: n.label || n.id,
-        nodeType: n.type || "generic",
-        description: n.description || "",
-        tool: n.tool,
-        config: n.config,
-        isStart: startNodeIds.includes(n.id),
-        isEnd: endNodeIds.includes(n.id),
-      },
-    };
-  });
-
-  const rfEdges: Edge[] = rawEdges.map((e, index) => ({
-    id: e.id || `edge-${e.source}-${e.target}-${index}`,
+  const flowEdges: Edge[] = workflow.edges.map((e) => ({
+    id: e.id,
     source: e.source,
     target: e.target,
     sourceHandle: e.source_handle,
     targetHandle: e.target_handle,
+    label: e.label || undefined,
     animated: true,
-    type: "smoothstep",
-    label: e.label || e.condition,
-    style: {
-      stroke: "#6366f1",
-      strokeWidth: 2,
-    },
-    labelStyle: {
-      fill: "#e2e8f0",
-      fontSize: 11,
-      fontWeight: 500,
-    },
-    labelBgStyle: {
-      fill: "#0f172a",
-      fillOpacity: 0.95,
-      stroke: "#334155",
-      strokeWidth: 1,
-    },
+    type: 'smoothstep',
+    style: { stroke: '#94a3b8', strokeWidth: 2 },
+    labelStyle: { fontSize: 11, fontWeight: 500, fill: '#64748b' },
+    labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
     labelBgPadding: [6, 4] as [number, number],
-    labelBgBorderRadius: 6,
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: "#6366f1",
-      width: 16,
-      height: 16,
-    },
+    labelBgBorderRadius: 4,
   }));
 
-  return { nodes: rfNodes, edges: rfEdges };
+  return { nodes: flowNodes, edges: flowEdges };
 }
 
-function InnerWorkflowCanvas({
-  workflow,
-  onFitViewTrigger,
-}: WorkflowCanvasProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<CustomNodeData>>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const { fitView } = useReactFlow();
-
-  const handleFitView = useCallback(() => {
-    setTimeout(() => {
-      fitView({ padding: 0.25, duration: 400 });
-    }, 50);
-  }, [fitView]);
+export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [rfInstance, setRfInstance] = useState<any>(null);
 
   useEffect(() => {
-    if (onFitViewTrigger) {
-      onFitViewTrigger(handleFitView);
-    }
-  }, [onFitViewTrigger, handleFitView]);
-
-  useEffect(() => {
-    if (workflow && workflow.nodes && workflow.nodes.length > 0) {
-      const layout = calculateLayout(
-        workflow.nodes,
-        workflow.edges || [],
-        workflow.start_nodes || [],
-        workflow.end_nodes || []
-      );
-      setNodes(layout.nodes);
-      setEdges(layout.edges);
-      handleFitView();
-    } else {
+    if (!workflow) {
       setNodes([]);
       setEdges([]);
+      return;
     }
-  }, [workflow, setNodes, setEdges, handleFitView]);
+    const layout = computeLayout(workflow);
+    setNodes(layout.nodes);
+    setEdges(layout.edges);
+
+    // Fit view after render
+    setTimeout(() => rfInstance?.fitView({ padding: 0.15 }), 100);
+  }, [workflow, rfInstance, setNodes, setEdges]);
+
+  const onInit = useCallback((instance: any) => {
+    setRfInstance(instance);
+    instance.fitView({ padding: 0.15 });
+  }, []);
+
+  if (!workflow) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[var(--background)]">
+        <div className="text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-[var(--accent-light)] flex items-center justify-center">
+            <svg className="w-8 h-8 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"
+              />
+            </svg>
+          </div>
+          <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">Workflow Canvas</h3>
+          <p className="text-sm text-[var(--text-muted)] max-w-xs">
+            Describe your automation in the chat and your workflow will appear here
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="relative w-full h-full min-h-[500px] bg-slate-950 overflow-hidden">
+    <div className="h-full w-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onInit={onInit}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.25 }}
+        fitViewOptions={{ padding: 0.15 }}
         minZoom={0.2}
-        maxZoom={1.5}
-        defaultEdgeOptions={{
-          type: "smoothstep",
-        }}
+        maxZoom={2}
+        defaultEdgeOptions={{ animated: true, type: 'smoothstep' }}
         proOptions={{ hideAttribution: true }}
       >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={24}
-          size={1.5}
-          color="#334155"
-          className="opacity-60"
-        />
-        <Controls
-          className="!bg-slate-900 !border-slate-800 !shadow-xl [&>button]:!bg-slate-900 [&>button]:!border-slate-800 [&>button]:!text-slate-300 [&>button:hover]:!bg-slate-800"
-        />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#e2e8f0" />
+        <Controls position="bottom-right" />
         <MiniMap
+          position="bottom-left"
           nodeColor={(n) => {
-            const data = n.data as CustomNodeData | undefined;
-            const t = (data?.nodeType || "").toLowerCase();
-            if (t.includes("trigger")) return "#10b981";
-            if (t.includes("llm") || t.includes("ai")) return "#a855f7";
-            if (t.includes("condition")) return "#f59e0b";
-            if (t.includes("action") || t.includes("tool")) return "#06b6d4";
-            if (t.includes("output")) return "#f43f5e";
-            return "#64748b";
+            const t = (n.data as any)?.nodeType?.toLowerCase() || '';
+            if (t.includes('trigger')) return '#eab308';
+            if (t.includes('llm') || t.includes('ai')) return '#8b5cf6';
+            if (t.includes('condition') || t.includes('decision')) return '#f97316';
+            if (t.includes('database')) return '#10b981';
+            if (t.includes('output') || t.includes('end')) return '#4f46e5';
+            if (t.includes('notification')) return '#ec4899';
+            return '#94a3b8';
           }}
-          maskColor="rgba(15, 23, 42, 0.75)"
-          className="!bg-slate-900 !border-slate-800 !rounded-lg !overflow-hidden !shadow-2xl"
+          maskColor="rgba(0,0,0,0.05)"
+          pannable
+          zoomable
         />
       </ReactFlow>
 
-      {/* Empty State Overlay */}
-      {(!workflow || !workflow.nodes || workflow.nodes.length === 0) && (
-        <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6 text-center">
-          <div className="w-16 h-16 mb-4 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-center text-slate-500 shadow-xl backdrop-blur-sm">
-            <svg
-              className="w-8 h-8 stroke-current"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
-              />
-            </svg>
-          </div>
-          <h3 className="text-base font-medium text-slate-300 mb-1">
-            Canvas is ready
-          </h3>
-          <p className="text-xs text-slate-500 max-w-sm">
-            Describe your workflow requirement above and click &quot;Generate Workflow&quot; to visualize the connected node graph.
-          </p>
-        </div>
-      )}
+      {/* Workflow info badge */}
+      <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm border border-[var(--border)] rounded-lg px-3 py-2 shadow-sm">
+        <p className="text-xs font-semibold text-[var(--text-primary)]">{workflow.workflow_name}</p>
+        <p className="text-[10px] text-[var(--text-muted)]">
+          {workflow.nodes.length} nodes · {workflow.edges.length} edges
+        </p>
+      </div>
     </div>
-  );
-}
-
-export default function WorkflowCanvas(props: WorkflowCanvasProps) {
-  return (
-    <ReactFlowProvider>
-      <InnerWorkflowCanvas {...props} />
-    </ReactFlowProvider>
   );
 }

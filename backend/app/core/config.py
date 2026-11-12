@@ -30,7 +30,7 @@ class Settings:
 
     def __init__(self) -> None:
         self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
-        self.GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+        self.GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview").strip() or "gemini-3-flash-preview"
         self.CORS_ORIGINS: List[str] = _parse_origins(os.getenv("CORS_ORIGINS"))
         self.MAX_GENERATION_RETRIES: int = int(os.getenv("MAX_GENERATION_RETRIES", "2"))
         self.ENABLE_WORKFLOW_REVIEW: bool = _parse_bool(os.getenv("ENABLE_WORKFLOW_REVIEW"), default=False)

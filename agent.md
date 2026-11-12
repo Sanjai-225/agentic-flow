@@ -1,4 +1,4 @@
-# 🤖 Agent Instructions — agentic-flow Repository
+# 🤖 Agent Instructions — agentic-flow Repository.
 
 > **This file governs all AI agents (Antigravity, Copilot, Cursor, Cline, Devin, etc.) and collaborators working on this repository.**
 > Every collaborator and AI agent **must** read and follow these rules before making any changes.

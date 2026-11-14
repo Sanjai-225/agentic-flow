@@ -126,8 +126,8 @@ function computeLayout(workflow: WorkflowResponse): { nodes: Node[]; edges: Edge
 }
 
 export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [rfInstance, setRfInstance] = useState<any>(null);
 
   useEffect(() => {
@@ -212,6 +212,23 @@ export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
           {workflow.nodes.length} nodes · {workflow.edges.length} edges
         </p>
       </div>
+
+      {/* Review status badge */}
+      {workflow.review_status && (
+        <div
+          className={`absolute top-3 right-3 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-sm text-xs font-semibold ${
+            workflow.review_status === 'passed'
+              ? 'bg-green-50/90 border-green-200 text-green-700'
+              : workflow.review_status === 'failed'
+              ? 'bg-orange-50/90 border-orange-200 text-orange-700'
+              : 'bg-blue-50/90 border-blue-200 text-blue-700'
+          }`}
+        >
+          {workflow.review_status === 'passed' && '✓ Verified'}
+          {workflow.review_status === 'failed' && '⚠ Issues'}
+          {workflow.review_status === 'needs_clarification' && '? Needs Clarification'}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
-import { WorkflowResponse } from '@/types/workflow';
+import { WorkflowResponse, ReviewIssue } from '@/types/workflow';
 
 interface ChatMessage {
   id: string;
@@ -13,6 +13,7 @@ interface ChatMessage {
 
 interface ChatPanelProps {
   onWorkflowGenerated: (workflow: WorkflowResponse) => void;
+  onOpenCatalog?: () => void;
 }
 
 const EXAMPLE_PROMPTS = [
@@ -23,7 +24,7 @@ const EXAMPLE_PROMPTS = [
   'Social media content scheduling and analytics',
 ];
 
-export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
+export default function ChatPanel({ onWorkflowGenerated, onOpenCatalog }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -34,6 +35,7 @@ export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -44,6 +46,20 @@ export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // Phased loading status
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingPhase(0);
+      return;
+    }
+    const timer1 = setTimeout(() => setLoadingPhase(1), 3000);
+    const timer2 = setTimeout(() => setLoadingPhase(2), 8000);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [isLoading]);
 
   const handleSubmit = async (promptText?: string) => {
     const prompt = (promptText || input).trim();
@@ -65,7 +81,12 @@ export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
     }
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const apiUrl =
+        typeof process.env.NEXT_PUBLIC_API_URL === 'string'
+          ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '')
+          : typeof window !== 'undefined'
+          ? ''
+          : 'http://localhost:8000';
       const res = await fetch(`${apiUrl}/api/workflows/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -84,10 +105,28 @@ export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
         .map((n) => `• **${n.label}** (${n.type})${n.tool ? ` → ${n.tool.name}` : ''}`)
         .join('\n');
 
+      // Build review status section
+      let reviewSection = '';
+      if (workflow.review_status) {
+        if (workflow.review_status === 'passed') {
+          reviewSection = '\n\n✅ **Verified** — Workflow passed semantic review';
+        } else if (workflow.review_status === 'failed') {
+          const issuesList = (workflow.review_issues || [])
+            .map((issue: ReviewIssue) => `• [${issue.severity.toUpperCase()}] ${issue.description}`)
+            .join('\n');
+          reviewSection = `\n\n⚠️ **Review Issues Found**\n${issuesList}`;
+        } else if (workflow.review_status === 'needs_clarification') {
+          reviewSection = `\n\n❓ **Clarification Needed**\n${workflow.review_summary || ''}`;
+        }
+        if (workflow.correction_attempts && workflow.correction_attempts > 0) {
+          reviewSection += `\n\n_Corrected ${workflow.correction_attempts} time(s)_`;
+        }
+      }
+
       const assistantMsg: ChatMessage = {
         id: `asst-${Date.now()}`,
         role: 'assistant',
-        content: `✅ **${workflow.workflow_name}**\n\n${workflow.description}\n\n**Nodes (${workflow.nodes.length}):**\n${nodeList}\n\n**Connections:** ${workflow.edges.length} edges\n\nThe workflow is now displayed on the canvas →`,
+        content: `✅ **${workflow.workflow_name}**\n\n${workflow.description}\n\n**Nodes (${workflow.nodes.length}):**\n${nodeList}\n\n**Connections:** ${workflow.edges.length} edges${reviewSection}\n\nThe workflow is now displayed on the canvas →`,
         workflow,
         timestamp: new Date(),
       };
@@ -124,16 +163,28 @@ export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
     <div className="flex flex-col h-full bg-white border-r border-[var(--border)]">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-sm font-semibold text-[var(--text-primary)]">AI Workflow Designer</h1>
+              <p className="text-xs text-[var(--text-muted)]">Describe your automation</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-sm font-semibold text-[var(--text-primary)]">AI Workflow Designer</h1>
-            <p className="text-xs text-[var(--text-muted)]">Describe your automation</p>
-          </div>
+          {onOpenCatalog && (
+            <button
+              onClick={onOpenCatalog}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-indigo-600 transition-colors flex items-center gap-1.5 font-medium shadow-2xs"
+              title="Browse registered node types and tools"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+              Nodes
+            </button>
+          )}
         </div>
       </div>
 
@@ -158,10 +209,17 @@ export default function ChatPanel({ onWorkflowGenerated }: ChatPanelProps) {
         {isLoading && (
           <div className="flex justify-start">
             <div className="bg-[var(--surface-hover)] rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {loadingPhase === 0 && '🔄 Generating workflow...'}
+                  {loadingPhase === 1 && '🔍 Reviewing workflow...'}
+                  {loadingPhase === 2 && '✨ Finalizing...'}
+                </span>
               </div>
             </div>
           </div>

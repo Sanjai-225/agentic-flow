@@ -30,10 +30,13 @@ class Settings:
 
     def __init__(self) -> None:
         self.GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
-        self.GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview").strip() or "gemini-3-flash-preview"
+        self.GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+        self.GEMINI_FALLBACK_MODEL: str = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite"
+        self.GEMINI_REVIEWER_MODEL: str = os.getenv("GEMINI_REVIEWER_MODEL", "gemma-4-31b-it").strip() or "gemma-4-31b-it"
         self.CORS_ORIGINS: List[str] = _parse_origins(os.getenv("CORS_ORIGINS"))
         self.MAX_GENERATION_RETRIES: int = int(os.getenv("MAX_GENERATION_RETRIES", "2"))
-        self.ENABLE_WORKFLOW_REVIEW: bool = _parse_bool(os.getenv("ENABLE_WORKFLOW_REVIEW"), default=False)
+        self.MAX_REVIEW_CORRECTION_ATTEMPTS: int = int(os.getenv("MAX_REVIEW_CORRECTION_ATTEMPTS", "2"))
+        self.ENABLE_WORKFLOW_REVIEW: bool = _parse_bool(os.getenv("ENABLE_WORKFLOW_REVIEW"), default=True)
         self.MOCK_DEV_MODE: bool = _parse_bool(
             os.getenv("MOCK_DEV_MODE"),
             default=not (bool(self.GEMINI_API_KEY) and self.GEMINI_API_KEY != "your_gemini_api_key_here"),

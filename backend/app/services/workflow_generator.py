@@ -1,12 +1,14 @@
-"""Orchestrates workflow generation, Pydantic validation, graph validation, retries, and optional review."""
+"""Orchestrates workflow generation, validation, semantic review, correction, and re-review."""
 
 import json
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
 
 from app.core.config import Settings, get_settings
+from app.registry.node_registry import NodeRegistry, get_default_registry
+from app.schemas.review import ReviewStatus, WorkflowReview
 from app.schemas.workflow import WorkflowSchema
 from app.services.llm_service import LLMService
 from app.services.workflow_reviewer import WorkflowReviewer
@@ -24,28 +26,30 @@ class WorkflowGenerationError(RuntimeError):
 
 
 class WorkflowGenerator:
-    """Coordinates LLM generation, schema/graph validation, retry loop, and optional review."""
+    """Coordinates LLM generation, schema/graph validation, retry loop, semantic review, and correction."""
 
     def __init__(
         self,
         llm_service: Optional[LLMService] = None,
         settings: Optional[Settings] = None,
+        registry: Optional[NodeRegistry] = None,
     ) -> None:
         self._settings = settings or get_settings()
-        self._llm_service = llm_service or LLMService(settings=self._settings)
-        self._reviewer = WorkflowReviewer(llm_service=self._llm_service)
+        self._registry = registry or get_default_registry()
+        self._llm_service = llm_service or LLMService(settings=self._settings, registry=self._registry)
+        self._reviewer = WorkflowReviewer(llm_service=self._llm_service, registry=self._registry)
 
-    def generate(self, prompt: str, enable_review: Optional[bool] = None) -> WorkflowSchema:
-        """Generate and validate a workflow from a natural-language prompt.
+    def generate(self, prompt: str, enable_review: Optional[bool] = None) -> Dict[str, Any]:
+        """Generate, validate, review, and optionally correct a workflow.
 
-        Retries up to `settings.MAX_GENERATION_RETRIES` (default 2) times if JSON
-        parsing, Pydantic validation, or graph validation fails.
+        Returns a dict containing the workflow fields plus review metadata.
         """
         max_retries = max(0, self._settings.MAX_GENERATION_RETRIES)
         should_review = (
             enable_review if enable_review is not None else self._settings.ENABLE_WORKFLOW_REVIEW
         )
 
+        # --- Mock dev mode ---
         if not self._settings.has_gemini_api_key:
             if self._settings.MOCK_DEV_MODE:
                 logger.warning(
@@ -59,8 +63,9 @@ class WorkflowGenerator:
                     raise WorkflowGenerationError(
                         "Mock workflow failed graph validation.", errors=graph_result.errors
                     )
-                return mock_wf
+                return self._build_response(mock_wf)
 
+        # --- LLM generation with retry loop ---
         last_raw_output = ""
         last_errors: List[str] = []
         workflow: Optional[WorkflowSchema] = None
@@ -91,31 +96,93 @@ class WorkflowGenerator:
                 errors=last_errors,
             )
 
+        # --- Build base response ---
+        result = self._build_response(workflow)
+
+        # --- Semantic review ---
         if should_review:
-            review_result = self._reviewer.review(original_prompt=prompt, workflow=workflow)
-            if not review_result.passed and review_result.missing_requirements:
-                logger.info(
-                    "Workflow self-review flagged missing requirements: %s",
-                    review_result.missing_requirements,
-                )
-                repaired_raw = self._llm_service.fix_workflow_json(
+            result = self._run_review_and_correction(prompt, workflow, result)
+
+        return result
+
+    def _run_review_and_correction(
+        self,
+        prompt: str,
+        workflow: WorkflowSchema,
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Run semantic review, and if it fails, attempt correction and re-review."""
+        max_corrections = self._settings.MAX_REVIEW_CORRECTION_ATTEMPTS
+        correction_attempts = 0
+
+        review = self._reviewer.review(original_prompt=prompt, workflow=workflow)
+        result = self._attach_review(result, review, correction_attempts)
+
+        while review.status == ReviewStatus.FAILED and correction_attempts < max_corrections:
+            correction_attempts += 1
+            logger.info(
+                "Workflow review failed. Correction attempt %d/%d.",
+                correction_attempts,
+                max_corrections,
+            )
+
+            # Build correction prompt from reviewer issues
+            issues_for_correction = [
+                f"Reviewer issue [{issue.severity}]: {issue.description}"
+                + (f" (Suggested: {issue.suggested_correction})" if issue.suggested_correction else "")
+                for issue in review.issues
+            ]
+            if not issues_for_correction:
+                issues_for_correction = [f"Review failed: {review.summary}"]
+
+            try:
+                corrected_raw = self._llm_service.fix_workflow_json(
                     original_prompt=prompt,
                     previous_output=workflow.model_dump_json(indent=2),
-                    validation_errors=[
-                        f"Missing requirement from review: {req}"
-                        for req in review_result.missing_requirements
-                    ],
+                    validation_errors=issues_for_correction,
                 )
-                repaired_workflow, repair_errors = self._parse_and_validate(repaired_raw)
-                if repaired_workflow is not None:
-                    workflow = repaired_workflow
-                else:
-                    logger.warning(
-                        "Review-driven repair failed validation (%s); returning previously validated workflow.",
-                        repair_errors,
-                    )
+            except Exception as exc:
+                logger.warning("Correction LLM call failed: %s", exc)
+                break
 
-        return workflow
+            corrected_wf, errors = self._parse_and_validate(corrected_raw)
+            if corrected_wf is None:
+                logger.warning("Corrected workflow failed validation: %s", errors)
+                break
+
+            workflow = corrected_wf
+            review = self._reviewer.review(original_prompt=prompt, workflow=workflow)
+            result = self._build_response(workflow)
+            result = self._attach_review(result, review, correction_attempts)
+
+        return result
+
+    @staticmethod
+    def _build_response(workflow: WorkflowSchema) -> Dict[str, Any]:
+        """Build the base response dict from a WorkflowSchema."""
+        data = workflow.model_dump()
+        data["review_status"] = None
+        data["review_summary"] = None
+        data["review_issues"] = None
+        data["requirement_coverage"] = None
+        data["correction_attempts"] = 0
+        data["clarification_required"] = False
+        return data
+
+    @staticmethod
+    def _attach_review(
+        result: Dict[str, Any],
+        review: WorkflowReview,
+        correction_attempts: int,
+    ) -> Dict[str, Any]:
+        """Attach review metadata to the response dict."""
+        result["review_status"] = review.status.value
+        result["review_summary"] = review.summary
+        result["review_issues"] = [issue.model_dump() for issue in review.issues]
+        result["requirement_coverage"] = [cov.model_dump() for cov in review.requirement_coverage]
+        result["correction_attempts"] = correction_attempts
+        result["clarification_required"] = review.clarification_required
+        return result
 
     @staticmethod
     def _parse_and_validate(raw_json: str) -> tuple[Optional[WorkflowSchema], List[str]]:

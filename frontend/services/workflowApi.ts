@@ -1,7 +1,11 @@
 import { WorkflowResponse } from "@/types/workflow";
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://localhost:8000";
+  typeof process.env.NEXT_PUBLIC_API_URL === "string"
+    ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "")
+    : typeof window !== "undefined"
+    ? ""
+    : "http://localhost:8000";
 
 /**
  * Generate a workflow from a natural language prompt
@@ -63,4 +67,17 @@ export async function checkBackendHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Fetch the node registry catalog from the backend
+ */
+export async function fetchNodeRegistry(category?: string): Promise<{ total_nodes: number; categories: string[]; nodes: any[] }> {
+  const query = category ? `?category=${encodeURIComponent(category)}` : '';
+  const url = `${API_BASE_URL}/api/registry/nodes${query}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch node registry: ${response.statusText}`);
+  }
+  return response.json();
 }

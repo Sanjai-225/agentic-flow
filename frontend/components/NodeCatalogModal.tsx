@@ -84,9 +84,6 @@ export default function NodeCatalogModal({ isOpen, onClose, onAddNode }: NodeCat
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block" />
               <h2 className="text-lg font-semibold text-[var(--text-primary)]">Node Registry Catalog</h2>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-medium border border-indigo-200">
-                Phase 3
-              </span>
             </div>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
               Verified reusable node types and integrations recognized by the Workflow Architect LLM

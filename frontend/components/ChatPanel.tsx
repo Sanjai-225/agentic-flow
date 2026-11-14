@@ -193,15 +193,17 @@ export default function ChatPanel({ onWorkflowGenerated, onOpenCatalog }: ChatPa
         {messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[90%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+              className={`max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                 msg.role === 'user'
-                  ? 'bg-[var(--accent)] text-white rounded-br-md'
+                  ? 'bg-indigo-600 text-white rounded-br-sm shadow-xs'
                   : msg.role === 'error'
-                  ? 'bg-[var(--error-light)] text-[var(--error)] border border-red-200 rounded-bl-md'
-                  : 'bg-[var(--surface-hover)] text-[var(--text-primary)] rounded-bl-md'
+                  ? 'bg-rose-50 text-rose-800 border border-rose-200 rounded-bl-sm'
+                  : 'bg-slate-100/90 text-slate-800 border border-slate-200/60 rounded-bl-sm shadow-2xs'
               }`}
             >
-              {msg.content}
+              <div className="space-y-1.5 whitespace-pre-line break-words">
+                {msg.content}
+              </div>
             </div>
           </div>
         ))}

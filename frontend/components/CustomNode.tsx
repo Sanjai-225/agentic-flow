@@ -100,49 +100,69 @@ function getColors(type: string) {
   return DEFAULT_COLORS;
 }
 
-function CustomNode({ data }: NodeProps) {
+function CustomNode({ data, selected }: NodeProps) {
   const d = data as unknown as CustomNodeData;
   const colors = getColors(d.nodeType);
-  const desc = d.description?.length > 80 ? d.description.slice(0, 80) + '…' : d.description;
+  const desc = d.description || '';
+  const hasConfig = d.config && Object.keys(d.config).length > 0;
 
   return (
     <div
-      className="relative min-w-[220px] max-w-[280px] rounded-xl shadow-sm border-2 transition-shadow hover:shadow-md"
+      className={`relative min-w-[240px] max-w-[300px] rounded-xl shadow-sm border-2 transition-all cursor-pointer hover:shadow-md ${
+        selected ? 'ring-3 ring-indigo-500 ring-offset-2 shadow-lg' : ''
+      }`}
       style={{ background: colors.bg, borderColor: colors.border }}
     >
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !border-2 !border-white" style={{ background: colors.border }} />
 
-      <div className="px-3.5 py-3">
+      <div className="px-4 py-3">
         {/* Type badge + tool */}
-        <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="flex items-center justify-between gap-2 mb-2">
           <span
-            className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full"
+            className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full inline-flex items-center"
             style={{ background: colors.badge, color: colors.badgeText }}
           >
-            {d.nodeType}
+            {d.nodeType.replace(/_/g, ' ')}
           </span>
-          {d.tool && (
-            <span className="text-[10px] text-[var(--text-muted)] flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-              {d.tool.name}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {hasConfig && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/70 border border-slate-200 text-slate-600 font-mono" title="Configured step">
+                ⚙️
+              </span>
+            )}
+            {d.tool && (
+              <span className="text-[11px] font-medium text-slate-700 bg-white/80 px-1.5 py-0.5 rounded border border-slate-200/80 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                {d.tool.name}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Label */}
-        <h3 className="text-sm font-semibold text-[var(--text-primary)] leading-tight mb-1">{d.label}</h3>
+        <h3 className="text-sm font-bold text-slate-900 leading-snug break-words mb-1">
+          {d.label}
+        </h3>
 
-        {/* Description */}
-        {desc && <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{desc}</p>}
+        {/* Description - clean, readable wrapping */}
+        {desc && (
+          <p className="text-xs text-slate-600 leading-relaxed break-words line-clamp-3">
+            {desc}
+          </p>
+        )}
 
         {/* Start/End badge */}
         {(d.isStart || d.isEnd) && (
-          <div className="mt-2 flex gap-1">
+          <div className="mt-2.5 flex items-center gap-1.5 pt-2 border-t border-black/5">
             {d.isStart && (
-              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-green-100 text-green-700">START</span>
+              <span className="text-[9px] font-bold tracking-wide px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                START NODE
+              </span>
             )}
             {d.isEnd && (
-              <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">END</span>
+              <span className="text-[9px] font-bold tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                END NODE
+              </span>
             )}
           </div>
         )}

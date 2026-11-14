@@ -4,13 +4,14 @@ import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import ChatPanel from '@/components/ChatPanel';
 import NodeCatalogModal from '@/components/NodeCatalogModal';
-import { WorkflowResponse } from '@/types/workflow';
+import { WorkflowResponse, NodeDefinition } from '@/types/workflow';
 
 const WorkflowCanvas = dynamic(() => import('@/components/WorkflowCanvas'), { ssr: false });
 
 export default function Home() {
   const [workflow, setWorkflow] = useState<WorkflowResponse | null>(null);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [pendingNode, setPendingNode] = useState<NodeDefinition | null>(null);
 
   return (
     <div className="h-screen w-screen flex overflow-hidden bg-[var(--background)]">
@@ -24,13 +25,20 @@ export default function Home() {
 
       {/* Right: Canvas */}
       <div className="flex-1 h-full relative">
-        <WorkflowCanvas workflow={workflow} />
+        <WorkflowCanvas
+          workflow={workflow}
+          pendingNode={pendingNode}
+          onNodeAdded={() => setPendingNode(null)}
+        />
       </div>
 
       {/* Node Catalog Modal */}
       <NodeCatalogModal
         isOpen={isCatalogOpen}
         onClose={() => setIsCatalogOpen(false)}
+        onAddNode={(node) => {
+          setPendingNode(node);
+        }}
       />
     </div>
   );

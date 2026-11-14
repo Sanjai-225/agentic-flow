@@ -15,10 +15,13 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import CustomNode from './CustomNode';
-import { WorkflowResponse, CustomNodeData } from '@/types/workflow';
+import NodeConfigPanel from './NodeConfigPanel';
+import { WorkflowResponse, CustomNodeData, NodeDefinition } from '@/types/workflow';
 
 interface WorkflowCanvasProps {
   workflow: WorkflowResponse | null;
+  pendingNode?: NodeDefinition | null;
+  onNodeAdded?: () => void;
 }
 
 const nodeTypes = { custom: CustomNode };
@@ -125,20 +128,75 @@ function computeLayout(workflow: WorkflowResponse): { nodes: Node[]; edges: Edge
   return { nodes: flowNodes, edges: flowEdges };
 }
 
-export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
+export default function WorkflowCanvas({ workflow, pendingNode, onNodeAdded }: WorkflowCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [rfInstance, setRfInstance] = useState<any>(null);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+
+  // Handle adding a node from the registry catalog
+  useEffect(() => {
+    if (!pendingNode) return;
+
+    const newId = `registry_${pendingNode.node_type}_${Date.now()}`;
+
+    // Calculate position — center of viewport or staggered
+    let posX = 100;
+    let posY = 100;
+    if (rfInstance) {
+      try {
+        const viewport = rfInstance.getViewport();
+        posX = (-viewport.x + 400) / viewport.zoom;
+        posY = (-viewport.y + 300) / viewport.zoom;
+        // Stagger slightly to avoid overlap
+        const offset = (nodes.length % 5) * 60;
+        posX += offset;
+        posY += offset;
+      } catch {
+        // fallback positions
+      }
+    }
+
+    const toolDef = pendingNode.compatible_tools?.[0];
+
+    const newNode: Node = {
+      id: newId,
+      type: 'custom',
+      position: { x: posX, y: posY },
+      data: {
+        id: newId,
+        label: pendingNode.label,
+        nodeType: pendingNode.node_type,
+        description: pendingNode.description,
+        config: { ...pendingNode.default_config },
+        tool: toolDef
+          ? {
+              name: toolDef.name,
+              operation: toolDef.operation,
+              status: 'configured',
+              purpose: toolDef.description,
+            }
+          : undefined,
+        isStart: false,
+        isEnd: false,
+      } as CustomNodeData,
+    };
+
+    setNodes((nds) => [...nds, newNode]);
+    onNodeAdded?.();
+  }, [pendingNode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!workflow) {
       setNodes([]);
       setEdges([]);
+      setSelectedNode(null);
       return;
     }
     const layout = computeLayout(workflow);
     setNodes(layout.nodes);
     setEdges(layout.edges);
+    setSelectedNode(null);
 
     // Fit view after render
     setTimeout(() => rfInstance?.fitView({ padding: 0.15 }), 100);
@@ -148,6 +206,46 @@ export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
     setRfInstance(instance);
     instance.fitView({ padding: 0.15 });
   }, []);
+
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+  }, []);
+
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null);
+  }, []);
+
+  const handleUpdateNodeConfig = useCallback(
+    (nodeId: string, newConfig: Record<string, any>, newLabel?: string) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === nodeId) {
+            const updatedData = {
+              ...(n.data as any),
+              config: newConfig,
+              ...(newLabel ? { label: newLabel } : {}),
+            };
+            return { ...n, data: updatedData };
+          }
+          return n;
+        })
+      );
+      setSelectedNode((prev) => {
+        if (prev && prev.id === nodeId) {
+          return {
+            ...prev,
+            data: {
+              ...(prev.data as any),
+              config: newConfig,
+              ...(newLabel ? { label: newLabel } : {}),
+            },
+          };
+        }
+        return prev;
+      });
+    },
+    [setNodes]
+  );
 
   if (!workflow) {
     return (
@@ -170,12 +268,14 @@ export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
   }
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full relative">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
         onInit={onInit}
         nodeTypes={nodeTypes}
         fitView
@@ -206,17 +306,19 @@ export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
       </ReactFlow>
 
       {/* Workflow info badge */}
-      <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm border border-[var(--border)] rounded-lg px-3 py-2 shadow-sm">
+      <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm border border-[var(--border)] rounded-lg px-3 py-2 shadow-sm z-10">
         <p className="text-xs font-semibold text-[var(--text-primary)]">{workflow.workflow_name}</p>
         <p className="text-[10px] text-[var(--text-muted)]">
-          {workflow.nodes.length} nodes · {workflow.edges.length} edges
+          {workflow.nodes.length} nodes · {workflow.edges.length} edges · Click a node to view config
         </p>
       </div>
 
       {/* Review status badge */}
       {workflow.review_status && (
         <div
-          className={`absolute top-3 right-3 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-sm text-xs font-semibold ${
+          className={`absolute top-3 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-sm text-xs font-semibold z-10 transition-all ${
+            selectedNode ? 'right-[440px]' : 'right-3'
+          } ${
             workflow.review_status === 'passed'
               ? 'bg-green-50/90 border-green-200 text-green-700'
               : workflow.review_status === 'failed'
@@ -229,6 +331,13 @@ export default function WorkflowCanvas({ workflow }: WorkflowCanvasProps) {
           {workflow.review_status === 'needs_clarification' && '? Needs Clarification'}
         </div>
       )}
+
+      {/* Node Configuration Inspector Drawer */}
+      <NodeConfigPanel
+        node={selectedNode}
+        onClose={() => setSelectedNode(null)}
+        onUpdateConfig={handleUpdateNodeConfig}
+      />
     </div>
   );
 }

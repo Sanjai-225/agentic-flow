@@ -7,6 +7,7 @@ import { fetchNodeRegistry } from '@/services/workflowApi';
 interface NodeCatalogModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onAddNode?: (node: NodeDefinition) => void;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -20,12 +21,13 @@ const CATEGORY_LABELS: Record<string, string> = {
   human_in_the_loop: 'Human in Loop',
 };
 
-export default function NodeCatalogModal({ isOpen, onClose }: NodeCatalogModalProps) {
+export default function NodeCatalogModal({ isOpen, onClose, onAddNode }: NodeCatalogModalProps) {
   const [catalog, setCatalog] = useState<RegistryCatalogResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [addedFeedback, setAddedFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -172,40 +174,42 @@ export default function NodeCatalogModal({ isOpen, onClose }: NodeCatalogModalPr
                   <div>
                     {/* Header */}
                     <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-900 leading-snug">{node.label}</h4>
-                        <code className="text-[11px] font-mono text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                          {node.node_type}
-                        </code>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-bold text-slate-900 leading-snug break-words">{node.label}</h4>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <code className="text-[11px] font-mono text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded font-semibold">
+                            {node.node_type}
+                          </code>
+                        </div>
                       </div>
-                      <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap flex-shrink-0">
                         {CATEGORY_LABELS[node.category] || node.category}
                       </span>
                     </div>
 
                     {/* Description */}
-                    <p className="text-xs text-slate-600 leading-relaxed mb-3">{node.description}</p>
+                    <p className="text-xs text-slate-600 leading-relaxed break-words mb-3">{node.description}</p>
 
                     {/* Ports */}
-                    <div className="space-y-1.5 text-[11px] pt-2 border-t border-slate-100 mb-3">
-                      <div className="flex items-center gap-1.5 text-slate-500">
-                        <span className="font-medium text-slate-700">Inputs:</span>
+                    <div className="space-y-1.5 text-xs pt-2.5 border-t border-slate-100 mb-3 bg-slate-50/70 p-2.5 rounded-lg">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-semibold text-slate-700 w-14 flex-shrink-0 text-[11px]">Inputs:</span>
                         {node.inputs && node.inputs.length > 0 ? (
-                          <span className="text-slate-600">
+                          <span className="text-slate-600 font-mono text-[11px] break-words">
                             {node.inputs.map((p) => `${p.name} (${p.data_type})`).join(', ')}
                           </span>
                         ) : (
-                          <span className="italic text-slate-400">None (Trigger/Entry)</span>
+                          <span className="italic text-slate-400 text-[11px]">None (Entry Trigger)</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5 text-slate-500">
-                        <span className="font-medium text-slate-700">Outputs:</span>
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-semibold text-slate-700 w-14 flex-shrink-0 text-[11px]">Outputs:</span>
                         {node.outputs && node.outputs.length > 0 ? (
-                          <span className="text-slate-600">
+                          <span className="text-slate-600 font-mono text-[11px] break-words">
                             {node.outputs.map((p) => `${p.name} (${p.data_type})`).join(', ')}
                           </span>
                         ) : (
-                          <span className="italic text-slate-400">None (Terminal)</span>
+                          <span className="italic text-slate-400 text-[11px]">None (Terminal)</span>
                         )}
                       </div>
                     </div>
@@ -213,13 +217,13 @@ export default function NodeCatalogModal({ isOpen, onClose }: NodeCatalogModalPr
                     {/* Compatible Tools */}
                     {node.compatible_tools && node.compatible_tools.length > 0 && (
                       <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                        <span className="text-[10px] font-semibold text-slate-400 uppercase">Tools:</span>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Tools:</span>
                         {node.compatible_tools.map((t, idx) => (
                           <span
                             key={idx}
-                            className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200"
                           >
-                            {t.name} ({t.operation})
+                            {t.name} <span className="opacity-70">({t.operation})</span>
                           </span>
                         ))}
                       </div>
@@ -236,6 +240,39 @@ export default function NodeCatalogModal({ isOpen, onClose }: NodeCatalogModalPr
                       ))}
                     </div>
                   )}
+
+                  {/* Add to Canvas Button */}
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onAddNode?.(node);
+                        setAddedFeedback(node.node_type);
+                        setTimeout(() => setAddedFeedback(null), 1500);
+                      }}
+                      className={`flex-1 text-xs font-semibold py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 shadow-2xs ${
+                        addedFeedback === node.node_type
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-98'
+                      }`}
+                    >
+                      {addedFeedback === node.node_type ? (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Added to Canvas!</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                          </svg>
+                          <span>Add to Canvas</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

@@ -1,9 +1,9 @@
 """Pydantic schemas for the workflow semantic review system."""
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ReviewStatus(str, Enum):
@@ -60,3 +60,18 @@ class WorkflowReview(BaseModel):
     issues: List[ReviewIssue] = Field(default_factory=list)
     assumptions: List[str] = Field(default_factory=list)
     clarification_required: bool = Field(default=False)
+
+    @field_validator("assumptions", mode="before")
+    @classmethod
+    def _normalize_assumptions(cls, v: Any) -> List[str]:
+        if not isinstance(v, list):
+            return []
+        result = []
+        for item in v:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, dict):
+                result.append(item.get("description") or item.get("text") or str(item))
+            else:
+                result.append(str(item))
+        return result

@@ -116,7 +116,10 @@ class LLMService:
                 "GEMINI_API_KEY is not configured. Set GEMINI_API_KEY in backend/.env."
             )
         if self._client is None:
-            self._client = genai.Client(api_key=self._settings.GEMINI_API_KEY)
+            self._client = genai.Client(
+                api_key=self._settings.GEMINI_API_KEY,
+                http_options=types.HttpOptions(api_version="v1beta"),
+            )
         return self._client
 
     def _call_rest(
@@ -125,7 +128,7 @@ class LLMService:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.2,
-        timeout: int = 12,
+        timeout: int = 30,
     ) -> str:
         """Execute request via REST HTTP/1.1 endpoint (avoids Windows SSL/HTTP2 negotiation bugs)."""
         key = self._settings.GEMINI_API_KEY
@@ -157,7 +160,7 @@ class LLMService:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.2,
-        timeout: int = 12,
+        timeout: int = 30,
     ) -> str:
         """Try REST first, then SDK for a single model. Returns raw JSON text."""
         # 1. Try robust REST HTTP call first
@@ -195,14 +198,14 @@ class LLMService:
             raise LLMConfigurationError("GEMINI_API_KEY is not configured.")
 
         candidate_models = [self._settings.GEMINI_MODEL]
-        fallback = self._settings.GEMINI_FALLBACK_MODEL
-        if fallback and fallback not in candidate_models:
-            candidate_models.append(fallback)
+        for fb in [self._settings.GEMINI_FALLBACK_MODEL, "gemini-3-flash-preview"]:
+            if fb and fb not in candidate_models:
+                candidate_models.append(fb)
 
         last_exc: Optional[Exception] = None
         for model_name in candidate_models:
             try:
-                return self._call_model(model_name, system_prompt, user_prompt, temperature, timeout=12)
+                return self._call_model(model_name, system_prompt, user_prompt, temperature, timeout=30)
             except Exception as exc:
                 logger.warning(f"Model {model_name} failed: {exc}")
                 last_exc = exc
@@ -213,13 +216,27 @@ class LLMService:
         ) from last_exc
 
     def generate_review_json(self, system_prompt: str, user_prompt: str, temperature: float = 0.1) -> str:
-        """Call the reviewer model (gemma-4-31b-it) with a longer timeout. No fallback to generator models."""
+        """Call the reviewer model with resilient fallback."""
         if not self._settings.has_gemini_api_key:
             raise LLMConfigurationError("GEMINI_API_KEY is not configured.")
 
-        reviewer_model = self._settings.GEMINI_REVIEWER_MODEL
-        logger.info(f"Calling reviewer model: {reviewer_model} (timeout=60s)")
-        return self._call_model(reviewer_model, system_prompt, user_prompt, temperature, timeout=60)
+        reviewer_candidates = [self._settings.GEMINI_REVIEWER_MODEL]
+        if "gemini-3-flash-preview" not in reviewer_candidates:
+            reviewer_candidates.append("gemini-3-flash-preview")
+
+        last_exc: Optional[Exception] = None
+        for reviewer_model in reviewer_candidates:
+            try:
+                logger.info(f"Calling reviewer model: {reviewer_model} (timeout=30s)")
+                return self._call_model(reviewer_model, system_prompt, user_prompt, temperature, timeout=30)
+            except Exception as exc:
+                logger.warning(f"Reviewer model {reviewer_model} failed: {exc}")
+                last_exc = exc
+                continue
+
+        raise LLMGenerationError(
+            f"Gemini API request failed across reviewer models {reviewer_candidates}: {last_exc}"
+        ) from last_exc
 
     def generate_workflow_json(self, prompt: str) -> str:
         """Generate a workflow JSON string from a natural-language requirement using Node Registry knowledge."""

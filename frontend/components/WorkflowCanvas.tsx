@@ -306,29 +306,48 @@ export default function WorkflowCanvas({ workflow, pendingNode, onNodeAdded }: W
       </ReactFlow>
 
       {/* Workflow info badge */}
-      <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm border border-[var(--border)] rounded-lg px-3 py-2 shadow-sm z-10">
-        <p className="text-xs font-semibold text-[var(--text-primary)]">{workflow.workflow_name}</p>
-        <p className="text-[10px] text-[var(--text-muted)]">
-          {workflow.nodes.length} nodes · {workflow.edges.length} edges · Click a node to view config
+      <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl px-4 py-2.5 shadow-sm z-10">
+        <p className="text-xs font-bold text-slate-900 leading-tight">{workflow.workflow_name}</p>
+        <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5">
+          <span className="font-medium text-slate-700">{workflow.nodes.length} nodes</span>
+          <span>·</span>
+          <span className="font-medium text-slate-700">{workflow.edges.length} edges</span>
+          <span>·</span>
+          <span className="text-indigo-600 font-medium">Click node to inspect</span>
         </p>
       </div>
 
       {/* Review status badge */}
       {workflow.review_status && (
         <div
-          className={`absolute top-3 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-sm text-xs font-semibold z-10 transition-all ${
+          className={`absolute top-3 backdrop-blur-md border rounded-xl px-3.5 py-2 shadow-sm text-xs font-semibold z-10 transition-all flex items-center gap-1.5 ${
             selectedNode ? 'right-[440px]' : 'right-3'
           } ${
             workflow.review_status === 'passed'
-              ? 'bg-green-50/90 border-green-200 text-green-700'
+              ? 'bg-emerald-50/95 border-emerald-300 text-emerald-800'
               : workflow.review_status === 'failed'
-              ? 'bg-orange-50/90 border-orange-200 text-orange-700'
-              : 'bg-blue-50/90 border-blue-200 text-blue-700'
+              ? 'bg-amber-50/95 border-amber-300 text-amber-900'
+              : 'bg-indigo-50/95 border-indigo-300 text-indigo-900'
           }`}
         >
-          {workflow.review_status === 'passed' && '✓ Verified'}
-          {workflow.review_status === 'failed' && '⚠ Issues'}
-          {workflow.review_status === 'needs_clarification' && '? Needs Clarification'}
+          {workflow.review_status === 'passed' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>Semantic Review: Passed</span>
+            </>
+          )}
+          {workflow.review_status === 'failed' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              <span>Semantic Review: Issues Detected</span>
+            </>
+          )}
+          {workflow.review_status === 'needs_clarification' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-indigo-500" />
+              <span>Clarification Needed</span>
+            </>
+          )}
         </div>
       )}
 

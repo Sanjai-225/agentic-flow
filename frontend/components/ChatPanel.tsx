@@ -24,6 +24,42 @@ const EXAMPLE_PROMPTS = [
   'Social media content scheduling and analytics',
 ];
 
+/**
+ * Helper to render inline markdown-style text (**bold**, _italic_, `code`) nicely
+ */
+function renderFormattedInline(text: string) {
+  // Regex to match **bold**, _italic_, and `code`
+  const parts = text.split(/(\*\*.*?\*\*|_.*?_|`.*?`)/g);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={index} className="font-semibold text-slate-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.startsWith('_') && part.endsWith('_')) {
+      return (
+        <em key={index} className="italic text-slate-600">
+          {part.slice(1, -1)}
+        </em>
+      );
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={index}
+          className="text-xs font-mono bg-slate-100 text-indigo-700 px-1 py-0.5 rounded border border-slate-200"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
+}
+
 export default function ChatPanel({ onWorkflowGenerated, onOpenCatalog }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -198,12 +234,44 @@ export default function ChatPanel({ onWorkflowGenerated, onOpenCatalog }: ChatPa
                   ? 'bg-indigo-600 text-white rounded-br-sm shadow-xs'
                   : msg.role === 'error'
                   ? 'bg-rose-50 text-rose-800 border border-rose-200 rounded-bl-sm'
-                  : 'bg-slate-100/90 text-slate-800 border border-slate-200/60 rounded-bl-sm shadow-2xs'
+                  : 'bg-white text-slate-800 border border-slate-200 rounded-bl-sm shadow-xs'
               }`}
             >
-              <div className="space-y-1.5 whitespace-pre-line break-words">
-                {msg.content}
-              </div>
+              {msg.role === 'assistant' ? (
+                <div className="space-y-2 break-words">
+                  {msg.content.split('\n\n').map((paragraph, pIdx) => {
+                    const lines = paragraph.split('\n');
+                    return (
+                      <div key={pIdx} className="space-y-1">
+                        {lines.map((line, lIdx) => {
+                          // Check if line is a bullet item
+                          if (line.startsWith('• ') || line.startsWith('- ')) {
+                            const bulletContent = line.slice(2);
+                            return (
+                              <div key={lIdx} className="flex items-start gap-2 pl-1 text-slate-700">
+                                <span className="text-indigo-500 font-bold leading-relaxed">•</span>
+                                <span className="flex-1 leading-relaxed">
+                                  {renderFormattedInline(bulletContent)}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <p key={lIdx} className="leading-relaxed">
+                              {renderFormattedInline(line)}
+                            </p>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap break-words leading-relaxed">
+                  {msg.content}
+                </div>
+              )}
             </div>
           </div>
         ))}

@@ -331,6 +331,13 @@ On startup, executions still marked `running` from a previous process are set to
    - Live tests for each provider, under `-m live`. A provider is marked "supported" in the status doc only after its live test passes.
 
 ## MILESTONE 3 — Composio integrations (NOT AUTHORIZED YET)
+
+> **Pending owner requirement, deferred to Milestone 3 (recorded 2026-11-16): cross-node data mapping (n8n-style).**
+> - **Today:** fields can be dragged only from the selected node's own "Input data" panel into that node's parameters.
+> - **Required:** take one node's **output** and use it as another node's **input** directly, for example:
+>   - drag output fields from a node on the canvas, or from the execution panel's output/schema view, onto another node's parameters;
+>   - an n8n-like node view with **Input | Parameters | Output** columns, where any upstream node's output tree (schema before a run, real values after one) can be dragged into any parameter.
+> - **Rules:** keep producing the same `{{nodes.<id>.output.<path>}}` references, with no engine change; only allow upstream nodes, and explain why a non-upstream field cannot be used.
 1. **Verify first:** read the current Composio Python SDK docs (docs.composio.dev) for the package name, auth configs, `connected_accounts.initiate`, tool listing and schemas, and tool execution with `user_id`. Pin the SDK version.
 2. **`integrations/base.py`:** an `IntegrationProvider` protocol with these methods: `list_toolkits`, `initiate_connection(user, toolkit, callback_url)`, `handle_callback`, `get_connection_status`, `list_actions(toolkit)`, `get_action_schema`, `execute_action(user, connection, action, args)`, `disconnect`.
 3. **`composio_provider.py`:**

@@ -1,6 +1,6 @@
-# AI Workflow Designer
+# Agentic Flow
 
-An AI-first, full-stack workflow design system that converts natural-language requirements into complete, structured workflow designs and visualizes them as interactive node graphs.
+An AI-assisted, n8n-inspired workflow automation builder: design workflows with natural language or on a canvas, then execute them on a real backend engine and inspect every node's input, output and errors.
 
 > **Example:** *"Create a workflow that receives customer emails, identifies the issue, checks order status from a database, generates a response using an LLM, and sends the response."*
 >
@@ -188,43 +188,40 @@ When `GEMINI_API_KEY` is not configured, the backend automatically runs in **Moc
 
 ## ⚙️ Environment Variables
 
-### Backend (`backend/.env`)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GEMINI_API_KEY` | Yes* | — | Google Gemini API key |
-| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model name |
-| `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated CORS origins |
-| `MAX_GENERATION_RETRIES` | No | `2` | Max validation retry attempts |
-| `ENABLE_WORKFLOW_REVIEW` | No | `false` | Enable LLM self-review |
-| `MOCK_DEV_MODE` | No | Auto | Force mock mode on/off |
-
-*\*Without a key, the backend runs in Mock Dev Mode automatically.*
-
-### Frontend (`frontend/.env.local`)
+### Backend (`backend/.env`, see `.env.example`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API URL |
+| `GEMINI_API_KEY` | — | Gemini key for the AI designer (mock designer when unset) |
+| `GEMINI_MODEL` / `GEMINI_FALLBACK_MODEL` / `GEMINI_REVIEWER_MODEL` | `gemini-3.8-flash` / `gemini-3.5-flash-lite` / `gemma-4-31b-it` | Designer and reviewer models |
+| `ENABLE_WORKFLOW_REVIEW` | `true` | Semantic review of generated workflows |
+| `DATABASE_URL` | `sqlite+aiosqlite:///backend/agentic_flow.db` | Persistence (migrated on startup) |
+| `JWT_SECRET` | dev fallback | **Required in production** |
+| `CREDENTIALS_ENCRYPTION_KEY` | derived in dev | Fernet key, **required in production** |
+| `HTTP_ALLOW_PRIVATE_NETWORKS` | `false` | Allow HTTP nodes to call localhost/private IPs (dev only) |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Used to build webhook URLs |
+| `EXECUTION_MAX_DURATION_SECONDS` | `900` | Hard cap per execution |
+| `CORS_ORIGINS` | `http://localhost:3000` | Allowed browser origins |
+
+### Frontend (`frontend/.env.local`)
+
+| Variable | Description |
+|----------|-------------|
+| `NEXT_PUBLIC_API_URL` | Call the backend directly (e.g. `http://localhost:8000`). Leave empty to use the built-in `/api` proxy, which forwards to `BACKEND_URL` |
 
 ---
 
-## 🎨 Design Philosophy
+## ▶️ Executing workflows (Milestone 1)
 
-- **AI-First**: The LLM independently determines workflow architecture — no hardcoded templates
-- **Dynamic Node Types**: No fixed enum; the LLM proposes suitable node types per requirement
-- **Design-Only**: Tools are identified and visualized but not executed (marked `not_connected`)
-- **Validated**: Every workflow passes Pydantic schema + graph topology validation before display
+1. Sign up at `http://localhost:3000/login`.
+2. Create a workflow manually (node library → canvas → connect → configure), or describe it to the **AI Designer**.
+3. **Validate** to see blocking problems per node. Design-only nodes (agents, integrations, loops…) are flagged and rejected before execution.
+4. **Run** with a JSON payload. Node statuses, inputs, outputs, errors and logs come from the backend execution record.
 
----
+Executable operations: Manual Trigger, Webhook Trigger, Set Variable, JSON Parse, Filter, Transform, If/Else, End, HTTP Request.
+Reference upstream data with `{{nodes.<id>.output.<field>}}`, `{{trigger.<field>}}` or `{{input.<field>}}`.
 
-## ⚠️ Known Limitations
-
-- This is the **initial design and visualization milestone** — workflows are not executed
-- Tool integrations are conceptual (`not_connected`) — no actual API connections
-- No database persistence, authentication, or user management
-- No multi-agent orchestration or execution monitoring
-- Frontend auto-layout is basic (top-to-bottom with branch spreading); complex graphs may need manual adjustment
+See `IMPLEMENTATION_STATUS.md` for the current capability list and known limitations, and `docs/MASTER_IMPLEMENTATION_PLAN.md` for the roadmap (AI agents, Composio integrations, reliability features).
 
 ---
 

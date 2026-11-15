@@ -8,6 +8,7 @@ output and older registry consumers keep working.
 
 from typing import List
 
+from app.registry.examples import EXAMPLE_CONFIGS
 from app.registry.configs import (
     EndConfig,
     FilterConfig,
@@ -39,6 +40,13 @@ def _out(id_: str, name: str, dt: PortDataType = PortDataType.ANY, desc: str = "
 
 
 def executable_definitions() -> List[NodeDefinition]:
+    definitions = _executable_definitions()
+    for d in definitions:
+        d.example_config = EXAMPLE_CONFIGS.get(d.operation_id, d.default_config)
+    return definitions
+
+
+def _executable_definitions() -> List[NodeDefinition]:
     return [
         # ---------------- Triggers ----------------
         NodeDefinition(

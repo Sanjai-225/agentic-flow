@@ -69,6 +69,7 @@ class WorkflowGenerator:
         last_raw_output = ""
         last_errors: List[str] = []
         workflow: Optional[WorkflowSchema] = None
+        best_structural: Optional[WorkflowSchema] = None
 
         for attempt in range(max_retries + 1):
             if attempt == 0:
@@ -87,8 +88,18 @@ class WorkflowGenerator:
                 )
 
             workflow, last_errors = self._parse_and_validate(last_raw_output)
-            if workflow is not None:
+            if workflow is None:
+                continue
+            best_structural = workflow
+            # Structurally valid. Executable nodes must also have runnable configs; feed those
+            # problems back to the designer while retries remain (design-only nodes are allowed).
+            last_errors = self._executability_errors(workflow)
+            if not last_errors:
                 break
+
+        # Prefer a structurally valid design (its readiness report lists what cannot run yet)
+        # over failing the whole request.
+        workflow = best_structural
 
         if workflow is None:
             raise WorkflowGenerationError(
@@ -197,6 +208,29 @@ class WorkflowGenerator:
         result["correction_attempts"] = correction_attempts
         result["clarification_required"] = review.clarification_required
         return result
+
+    @staticmethod
+    def _executability_errors(workflow: WorkflowSchema) -> List[str]:
+        """Planner problems on *executable* nodes that the designer can fix (config shape, ports, mappings)."""
+        from app.core.errors import ErrorCategory
+        from app.engine.planner import plan_workflow
+        from app.services.workflow_upgrade import upgrade_workflow
+
+        upgraded = upgrade_workflow(workflow)
+        plan = plan_workflow(upgraded)
+        fixable = {ErrorCategory.SCHEMA_VALIDATION, ErrorCategory.INVALID_MAPPING, ErrorCategory.GRAPH_VALIDATION}
+        errors: List[str] = []
+        for issue in plan.errors:
+            if issue.category not in fixable:
+                continue
+            if issue.node_id and issue.node_id not in plan.definitions:
+                continue  # design-only / unsupported node: not a config problem
+            definition = plan.definitions.get(issue.node_id or "")
+            hint = (f" Valid config example for {definition.operation_id}: "
+                    f"{json.dumps(definition.example_config)}") if definition and issue.category == \
+                ErrorCategory.SCHEMA_VALIDATION else ""
+            errors.append(f"[{issue.category.value}] {issue.message}{hint}")
+        return errors
 
     @staticmethod
     def _parse_and_validate(raw_json: str) -> tuple[Optional[WorkflowSchema], List[str]]:

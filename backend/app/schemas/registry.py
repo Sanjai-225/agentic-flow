@@ -130,6 +130,9 @@ class NodeDefinition(BaseModel):
     requires_approval: bool = False
     supports_streaming: bool = False
     is_async: bool = False
+    example_config: Dict[str, Any] = Field(
+        default_factory=dict, description="Valid example configuration (used in designer prompts and docs)."
+    )
     default_retry: RetryPolicy = Field(default_factory=RetryPolicy)
     default_timeout_seconds: float = Field(default=60.0, gt=0, le=3600)
 

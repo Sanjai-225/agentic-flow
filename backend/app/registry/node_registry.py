@@ -1,5 +1,6 @@
 """Node Registry implementation for managing, discovering, and injecting node knowledge."""
 
+import json
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
@@ -85,12 +86,18 @@ class NodeRegistry:
             "EXECUTABLE OPERATIONS (these can actually run; prefer them whenever they satisfy the requirement):",
         ]
         for node in self.list_executable():
-            fields = ", ".join(f.key for f in node.ui_fields) or "none"
             ports = "/".join(node.ports_out) or "none"
+            out_fields = ", ".join(node.output_schema.get("properties", {}).keys())
             lines.append(
                 f"- operation `{node.operation_id}` (type `{node.node_type}`, {node.label}): {node.description} "
-                f"| config keys: [{fields}] | output ports: [{ports}]"
+                f"| output ports: [{ports}]"
+                + (f" | output fields: [{out_fields}]" if out_fields else "")
+                + f"\n    config example (use exactly this shape): {json.dumps(node.example_config)}"
             )
+        lines.append(
+            "Condition operators: eq, neq, gt, gte, lt, lte, contains, not_contains, starts_with, ends_with, "
+            "is_empty, not_empty, is_true, is_false, regex. Set field types: auto, string, number, boolean, object, array."
+        )
 
         lines.append("\nDESIGN-ONLY NODE TYPES (can be drawn but cannot execute yet):")
         grouped: Dict[str, List[NodeDefinition]] = {}

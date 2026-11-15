@@ -1,314 +1,177 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
-import { WorkflowResponse, ReviewIssue } from '@/types/workflow';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+
+import { api } from '@/lib/api';
+import type { ReviewIssue, WorkflowResponse } from '@/types/workflow';
 
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
   content: string;
   workflow?: WorkflowResponse;
-  timestamp: Date;
 }
 
 interface ChatPanelProps {
   onWorkflowGenerated: (workflow: WorkflowResponse) => void;
-  onOpenCatalog?: () => void;
+  onClose?: () => void;
 }
 
 const EXAMPLE_PROMPTS = [
+  'When run manually with an amount and a URL, fetch the URL over http only if the amount is above 100',
   'Customer support email automation with order lookup',
   'Invoice processing with approval and payment',
   'Research automation with web scraping and report generation',
-  'CI/CD pipeline with testing, build, and deployment',
-  'Social media content scheduling and analytics',
 ];
 
-/**
- * Helper to render inline markdown-style text (**bold**, _italic_, `code`) nicely
- */
-function renderFormattedInline(text: string) {
-  // Regex to match **bold**, _italic_, and `code`
+/** Render inline **bold**, _italic_ and `code`. */
+export function renderFormattedInline(text: string) {
   const parts = text.split(/(\*\*.*?\*\*|_.*?_|`.*?`)/g);
-
   return parts.map((part, index) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={index} className="font-semibold text-[var(--text-primary)]">{part.slice(2, -2)}</strong>;
+    if (part.startsWith('_') && part.endsWith('_') && part.length > 2) return <em key={index} className="italic text-[var(--text-secondary)]">{part.slice(1, -1)}</em>;
+    if (part.startsWith('`') && part.endsWith('`'))
       return (
-        <strong key={index} className="font-semibold text-slate-900">
-          {part.slice(2, -2)}
-        </strong>
-      );
-    }
-    if (part.startsWith('_') && part.endsWith('_')) {
-      return (
-        <em key={index} className="italic text-slate-600">
-          {part.slice(1, -1)}
-        </em>
-      );
-    }
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return (
-        <code
-          key={index}
-          className="text-xs font-mono bg-slate-100 text-indigo-700 px-1 py-0.5 rounded border border-slate-200"
-        >
+        <code key={index} className="rounded px-1 py-0.5 font-mono text-xs text-[var(--accent-hover)]" style={{ background: 'var(--surface-hover)' }}>
           {part.slice(1, -1)}
         </code>
       );
-    }
     return part;
   });
 }
 
-export default function ChatPanel({ onWorkflowGenerated, onOpenCatalog }: ChatPanelProps) {
+export function summarizeWorkflow(workflow: WorkflowResponse): string {
+  const nodeList = workflow.nodes.map((n) => `• **${n.label}** \`${n.operation || n.type}\`${n.tool ? ` → ${n.tool.name}` : ''}`).join('\n');
+  let review = '';
+  if (workflow.review_status === 'passed') review = '\n\n**Semantic review:** passed';
+  else if (workflow.review_status === 'failed')
+    review = `\n\n**Semantic review issues**\n${(workflow.review_issues || []).map((i: ReviewIssue) => `• [${i.severity.toUpperCase()}] ${i.description}`).join('\n')}`;
+  else if (workflow.review_status === 'needs_clarification') review = `\n\n**Clarification needed**\n${workflow.review_summary || ''}`;
+
+  const readiness = workflow.execution_readiness;
+  let exec = '';
+  if (readiness) {
+    if (readiness.executable) exec = '\n\n**Execution readiness:** every node is executable. Save and click Run.';
+    else {
+      const unsupported = readiness.issues.filter((i) => i.severity === 'error').slice(0, 6);
+      exec = `\n\n**Execution readiness:** not runnable yet\n${unsupported.map((i) => `• ${i.message}`).join('\n')}`;
+    }
+  }
+  return `**${workflow.workflow_name}**\n\n${workflow.description}\n\n**Nodes (${workflow.nodes.length}):**\n${nodeList}${review}${exec}`;
+}
+
+export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Hi! I\'m your AI Workflow Designer. Describe any automation or business process, and I\'ll design a complete workflow for you.\n\nTry something like:\n• "Create an email support system that checks orders and responds automatically"\n• "Build an invoice approval pipeline with Slack notifications"',
-      timestamp: new Date(),
+      content:
+        "Describe an automation and I'll design it on the canvas. Generated workflows use the same schema and engine as manual ones — nodes that can't execute yet are flagged.",
     },
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
-
+  const scrollToBottom = useCallback(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), []);
+  useEffect(scrollToBottom, [messages, scrollToBottom]);
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
-
-  // Phased loading status
-  useEffect(() => {
-    if (!isLoading) {
-      setLoadingPhase(0);
-      return;
-    }
-    const timer1 = setTimeout(() => setLoadingPhase(1), 3000);
-    const timer2 = setTimeout(() => setLoadingPhase(2), 8000);
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
+    if (!isLoading) return setLoadingPhase(0);
+    const t1 = setTimeout(() => setLoadingPhase(1), 3000);
+    const t2 = setTimeout(() => setLoadingPhase(2), 8000);
+    return () => (clearTimeout(t1), clearTimeout(t2));
   }, [isLoading]);
 
   const handleSubmit = async (promptText?: string) => {
     const prompt = (promptText || input).trim();
     if (!prompt || isLoading) return;
-
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: prompt,
-      timestamp: new Date(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: 'user', content: prompt }]);
     setInput('');
     setIsLoading(true);
-
-    // Auto-resize textarea back
-    if (textareaRef.current) {
-      textareaRef.current.style.height = '44px';
-    }
-
     try {
-      const apiUrl =
-        typeof process.env.NEXT_PUBLIC_API_URL === 'string'
-          ? process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '')
-          : typeof window !== 'undefined'
-          ? ''
-          : 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/api/workflows/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail));
-      }
-
-      const workflow: WorkflowResponse = await res.json();
+      const workflow = await api.generate(prompt);
       onWorkflowGenerated(workflow);
-
-      const nodeList = workflow.nodes
-        .map((n) => `• **${n.label}** (${n.type})${n.tool ? ` → ${n.tool.name}` : ''}`)
-        .join('\n');
-
-      // Build review status section
-      let reviewSection = '';
-      if (workflow.review_status) {
-        if (workflow.review_status === 'passed') {
-          reviewSection = '\n\n✅ **Verified** — Workflow passed semantic review';
-        } else if (workflow.review_status === 'failed') {
-          const issuesList = (workflow.review_issues || [])
-            .map((issue: ReviewIssue) => `• [${issue.severity.toUpperCase()}] ${issue.description}`)
-            .join('\n');
-          reviewSection = `\n\n⚠️ **Review Issues Found**\n${issuesList}`;
-        } else if (workflow.review_status === 'needs_clarification') {
-          reviewSection = `\n\n❓ **Clarification Needed**\n${workflow.review_summary || ''}`;
-        }
-        if (workflow.correction_attempts && workflow.correction_attempts > 0) {
-          reviewSection += `\n\n_Corrected ${workflow.correction_attempts} time(s)_`;
-        }
-      }
-
-      const assistantMsg: ChatMessage = {
-        id: `asst-${Date.now()}`,
-        role: 'assistant',
-        content: `✅ **${workflow.workflow_name}**\n\n${workflow.description}\n\n**Nodes (${workflow.nodes.length}):**\n${nodeList}\n\n**Connections:** ${workflow.edges.length} edges${reviewSection}\n\nThe workflow is now displayed on the canvas →`,
-        workflow,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+      setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'assistant', content: summarizeWorkflow(workflow), workflow }]);
     } catch (error: any) {
-      const errorMsg: ChatMessage = {
-        id: `err-${Date.now()}`,
-        role: 'error',
-        content: `❌ Failed to generate workflow: ${error.message}`,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMsg]);
+      setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: 'error', content: `Failed to generate workflow: ${error.message}` }]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    // Auto-resize
-    const el = e.target;
-    el.style.height = '44px';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-  };
-
   return (
-    <div className="flex flex-col h-full bg-white border-r border-[var(--border)]">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-[var(--border)]">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold text-[var(--text-primary)]">AI Workflow Designer</h1>
-              <p className="text-xs text-[var(--text-muted)]">Describe your automation</p>
-            </div>
-          </div>
-          {onOpenCatalog && (
-            <button
-              onClick={onOpenCatalog}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-indigo-600 transition-colors flex items-center gap-1.5 font-medium shadow-2xs"
-              title="Browse registered node types and tools"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-              Nodes
-            </button>
-          )}
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">AI Workflow Designer</h2>
+          <p className="text-[11px] text-[var(--text-muted)]">Gemini designer · semantic review · schema validation</p>
         </div>
+        {onClose && (
+          <button className="btn-ghost px-2" onClick={onClose} aria-label="Close designer">
+            ✕
+          </button>
+        )}
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+              className="max-w-[94%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed"
+              style={
                 msg.role === 'user'
-                  ? 'bg-indigo-600 text-white rounded-br-sm shadow-xs'
+                  ? { background: 'var(--accent-strong)', color: 'white' }
                   : msg.role === 'error'
-                  ? 'bg-rose-50 text-rose-800 border border-rose-200 rounded-bl-sm'
-                  : 'bg-white text-slate-800 border border-slate-200 rounded-bl-sm shadow-xs'
-              }`}
+                    ? { background: 'var(--error-light)', color: 'var(--danger)' }
+                    : { background: 'var(--surface-hover)', color: 'var(--text-secondary)' }
+              }
             >
               {msg.role === 'assistant' ? (
                 <div className="space-y-2 break-words">
-                  {msg.content.split('\n\n').map((paragraph, pIdx) => {
-                    const lines = paragraph.split('\n');
-                    return (
-                      <div key={pIdx} className="space-y-1">
-                        {lines.map((line, lIdx) => {
-                          // Check if line is a bullet item
-                          if (line.startsWith('• ') || line.startsWith('- ')) {
-                            const bulletContent = line.slice(2);
-                            return (
-                              <div key={lIdx} className="flex items-start gap-2 pl-1 text-slate-700">
-                                <span className="text-indigo-500 font-bold leading-relaxed">•</span>
-                                <span className="flex-1 leading-relaxed">
-                                  {renderFormattedInline(bulletContent)}
-                                </span>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <p key={lIdx} className="leading-relaxed">
-                              {renderFormattedInline(line)}
-                            </p>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
+                  {msg.content.split('\n\n').map((para, p) => (
+                    <div key={p} className="space-y-0.5">
+                      {para.split('\n').map((line, l) =>
+                        line.startsWith('• ') ? (
+                          <div key={l} className="flex gap-2 pl-1">
+                            <span className="text-[var(--accent)]">•</span>
+                            <span className="flex-1">{renderFormattedInline(line.slice(2))}</span>
+                          </div>
+                        ) : (
+                          <p key={l}>{renderFormattedInline(line)}</p>
+                        ),
+                      )}
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="whitespace-pre-wrap break-words leading-relaxed">
-                  {msg.content}
-                </div>
+                <div className="whitespace-pre-wrap break-words">{msg.content}</div>
               )}
             </div>
           </div>
         ))}
-
         {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-[var(--surface-hover)] rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-                <span className="text-xs text-[var(--text-muted)]">
-                  {loadingPhase === 0 && '🔄 Generating workflow...'}
-                  {loadingPhase === 1 && '🔍 Reviewing workflow...'}
-                  {loadingPhase === 2 && '✨ Finalizing...'}
-                </span>
-              </div>
-            </div>
+          <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" />
+            {['Generating workflow…', 'Reviewing workflow…', 'Finalizing…'][loadingPhase]}
           </div>
         )}
-        <div ref={messagesEndRef} />
+        <div ref={endRef} />
       </div>
 
-      {/* Quick prompts */}
       {messages.length <= 1 && (
         <div className="px-4 pb-2">
-          <p className="text-xs text-[var(--text-muted)] mb-2">Quick start:</p>
+          <p className="mb-1.5 text-[11px] text-[var(--text-muted)]">Try:</p>
           <div className="flex flex-wrap gap-1.5">
-            {EXAMPLE_PROMPTS.map((p, i) => (
-              <button
-                key={i}
-                onClick={() => handleSubmit(p)}
-                disabled={isLoading}
-                className="text-xs px-3 py-1.5 rounded-full border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--accent-light)] hover:text-[var(--accent)] hover:border-[var(--accent)] transition-colors disabled:opacity-50"
-              >
+            {EXAMPLE_PROMPTS.map((p) => (
+              <button key={p} onClick={() => handleSubmit(p)} disabled={isLoading} className="btn-ghost rounded-full text-left">
                 {p}
               </button>
             ))}
@@ -316,35 +179,24 @@ export default function ChatPanel({ onWorkflowGenerated, onOpenCatalog }: ChatPa
         </div>
       )}
 
-      {/* Input */}
-      <div className="p-3 border-t border-[var(--border)]">
-        <div className="flex items-end gap-2 bg-[var(--surface-hover)] rounded-xl px-3 py-2">
+      <div className="border-t border-[var(--border)] p-3">
+        <div className="flex items-end gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--surface-sunken)' }}>
           <textarea
-            ref={textareaRef}
+            aria-label="Describe your workflow"
             value={input}
-            onChange={handleTextareaChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Describe your workflow..."
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Describe your workflow…"
             disabled={isLoading}
-            rows={1}
-            className="flex-1 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] resize-none focus:outline-none disabled:opacity-50"
-            style={{ height: '44px', maxHeight: '120px' }}
+            rows={2}
+            className="flex-1 resize-none bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
           />
-          <button
-            onClick={() => handleSubmit()}
-            disabled={!input.trim() || isLoading}
-            className="w-8 h-8 rounded-lg bg-[var(--accent)] text-white flex items-center justify-center hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19V5m0 0l-5 5m5-5l5 5" />
-            </svg>
+          <button onClick={() => handleSubmit()} disabled={!input.trim() || isLoading} className="btn-primary h-8 w-8 p-0" aria-label="Generate">
+            ↑
           </button>
         </div>
-        <p className="text-[10px] text-[var(--text-muted)] mt-1.5 text-center">
-          Enter to send · Shift+Enter for new line
-        </p>
+        <p className="mt-1.5 text-center text-[10px] text-[var(--text-muted)]">Generating replaces the canvas content (unsaved changes are lost).</p>
       </div>
     </div>
   );
 }
-

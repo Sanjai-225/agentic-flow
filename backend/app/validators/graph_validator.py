@@ -80,6 +80,14 @@ class GraphValidator:
 
         # 5. Check reverse reachability from end_nodes (catches dead-ends and inescapable cycles)
         can_reach_end = GraphValidator._bfs(workflow.end_nodes, reverse_adjacency)
+        # A Loop Over Items body (everything reachable from a loop's 'item' port) intentionally ends without an
+        # outgoing edge: after each item, control returns to the loop, which continues from its 'done' port.
+        # Body nodes therefore count as reaching an end whenever their loop does.
+        for loop in workflow.nodes:
+            if getattr(loop, "operation", None) == "core.loop" and loop.id in can_reach_end:
+                body_starts = [e.target for e in workflow.edges
+                               if e.source == loop.id and getattr(e, "source_port", None) == "item"]
+                can_reach_end |= GraphValidator._bfs(body_starts, adjacency) - {loop.id}
         no_terminal_path = sorted(node_ids - can_reach_end)
         if no_terminal_path:
             errors.append(

@@ -11,10 +11,12 @@ import { CredentialsDialog, RunDialog } from '@/components/editor/Dialogs';
 import ExecutionPanel from '@/components/editor/ExecutionPanel';
 import NodeConfigPanel from '@/components/editor/NodeConfigPanel';
 import NodeLibrary from '@/components/editor/NodeLibrary';
+import { api } from '@/lib/api';
+import { EXTERNAL_TRIGGERS, TRIGGER_LABEL, newExternalRuns, runPayloadHint, runPayloadTemplate } from '@/lib/runHelpers';
 import { CATEGORY_COLOR } from '@/lib/status';
 import type { FlowNode } from '@/lib/workflowMapping';
 import { useEditorStore } from '@/store/editorStore';
-import type { WorkflowResponse } from '@/types/workflow';
+import type { ExecutionSummary, WorkflowResponse } from '@/types/workflow';
 
 const nodeTypes = { workflow: WorkflowNodeComponent };
 
@@ -76,7 +78,48 @@ export default function WorkflowEditor({ workflowId }: { workflowId: string | nu
   }, []);
 
   const trigger = s.nodes.find((n) => s.registryByOp[n.data.node.operation || '']?.is_trigger);
-  const sample = trigger?.data.node.config?.sample_payload ?? {};
+  const triggerOp = trigger?.data.node.operation ?? null;
+  const sample = runPayloadTemplate(triggerOp, trigger?.data.node.config);
+
+  // Runs started outside the editor (public form, webhook, scheduler) appear automatically:
+  // poll the history while the page is visible and open the newest new run.
+  const watchedId = s.workflowId;
+  const watchExternal = !!watchedId && !!triggerOp && EXTERNAL_TRIGGERS.has(triggerOp);
+  useEffect(() => {
+    if (!watchExternal || !watchedId) return;
+    let known: Set<string> | null = null;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped || document.visibilityState !== 'visible') return;
+      let rows: ExecutionSummary[];
+      try {
+        rows = await api.listExecutions(watchedId);
+      } catch {
+        return; // backend asleep / offline: try again next tick
+      }
+      if (stopped) return;
+      if (known === null) {
+        known = new Set(rows.map((r) => r.id));
+        return;
+      }
+      const fresh = newExternalRuns(known, rows);
+      rows.forEach((r) => known!.add(r.id));
+      if (!fresh.length) return;
+      const st = useEditorStore.getState();
+      useEditorStore.setState({ executions: rows });
+      const busy = st.execution && (st.execution.status === 'running' || st.execution.status === 'pending');
+      if (!busy) {
+        st.setNotice({ kind: 'info', text: `${TRIGGER_LABEL[fresh[0].trigger_type] ?? 'New run started'} — showing its execution.` });
+        st.openExecution(fresh[0].id);
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 5000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [watchExternal, watchedId]);
   const running = s.execution && (s.execution.status === 'running' || s.execution.status === 'pending');
 
   return (
@@ -180,6 +223,7 @@ export default function WorkflowEditor({ workflowId }: { workflowId: string | nu
       {showRun && (
         <RunDialog
           initial={sample}
+          hint={runPayloadHint(triggerOp)}
           onClose={() => setShowRun(false)}
           onRun={(input) => {
             setShowRun(false);

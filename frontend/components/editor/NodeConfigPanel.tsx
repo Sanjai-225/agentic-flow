@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ConditionsEditor,
   ExpressionInput,
+  FIELD_DRAG_MIME,
   JsonEditor,
   JsonTemplateEditor,
   KeyValueEditor,
@@ -244,7 +245,19 @@ function ScheduleSection({ workflowId, nodeId, dirty }: { workflowId: string | n
   );
 }
 
-function DataPicker({ nodeId }: { nodeId: string }) {
+/** Drag payload for a data reference. `text/plain` lets the browser drop it into any input/textarea natively. */
+export function startFieldDrag(e: React.DragEvent, expr: string) {
+  e.dataTransfer.setData('text/plain', expr);
+  e.dataTransfer.setData(FIELD_DRAG_MIME, expr);
+  e.dataTransfer.effectAllowed = 'copy';
+  document.body.classList.add('af-dragging-field');
+}
+
+export function endFieldDrag() {
+  document.body.classList.remove('af-dragging-field');
+}
+
+export function DataPicker({ nodeId, compact = false }: { nodeId: string; compact?: boolean }) {
   const edges = useEditorStore((s) => s.edges);
   const nodes = useEditorStore((s) => s.nodes);
   const execution = useEditorStore((s) => s.execution);
@@ -271,7 +284,8 @@ function DataPicker({ nodeId }: { nodeId: string }) {
   return (
     <div className="space-y-3">
       <p className="text-[11px] text-[var(--text-muted)]">
-        Click a field to insert a reference into the last focused input. Before the first run, fields are inferred from each node&apos;s configuration; after a run, real output values are shown.
+        <b>Drag</b> a field into any input below (or click it to insert into the last focused input).
+        {!compact && " Before the first run, fields are inferred from each node's configuration; after a run, real output values are shown."}
       </p>
       {ordered.map((n) => {
         const run = execution?.nodes.find((r) => r.node_id === n.id);
@@ -285,12 +299,17 @@ function DataPicker({ nodeId }: { nodeId: string }) {
               {paths.slice(0, 30).map((p) => (
                 <button
                   key={p.expr}
-                  title={p.expr}
-                  className="rounded-md px-1.5 py-0.5 text-left font-mono text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  type="button"
+                  draggable
+                  data-testid={`field-chip-${p.expr}`}
+                  title={`${p.expr}\nDrag into a field, or click to insert`}
+                  className="cursor-grab rounded-md px-1.5 py-0.5 text-left font-mono text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] active:cursor-grabbing"
                   style={{ background: 'var(--surface-hover)' }}
+                  onDragStart={(e) => startFieldDrag(e, p.expr)}
+                  onDragEnd={endFieldDrag}
                   onClick={() => (insert ? insert(p.expr) : navigator.clipboard?.writeText(p.expr))}
                 >
-                  {p.path} <span className="text-[var(--text-muted)]">{p.preview}</span>
+                  ⠿ {p.path} <span className="text-[var(--text-muted)]">{p.preview}</span>
                 </button>
               ))}
             </div>
@@ -405,6 +424,14 @@ export default function NodeConfigPanel() {
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
         {tab === 'parameters' && (
           <>
+            {definition && !definition.is_trigger && (
+              <details open className="rounded-lg border border-[var(--border)] px-2.5 py-2" data-testid="input-data-panel">
+                <summary className="cursor-pointer text-[11px] font-semibold text-[var(--text-secondary)]">Input data — drag fields into the boxes below</summary>
+                <div className="mt-2 max-h-56 overflow-y-auto">
+                  <DataPicker nodeId={node.id} compact />
+                </div>
+              </details>
+            )}
             {definition ? (
               definition.ui_fields.filter((f) => visible(f, node.config)).map((field) => (
                 <div key={field.key}>

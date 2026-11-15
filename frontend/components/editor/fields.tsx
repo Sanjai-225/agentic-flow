@@ -31,6 +31,32 @@ interface InsertTarget {
 }
 export const useInsertTarget = create<InsertTarget>((set) => ({ insert: null, setInsert: (fn) => set({ insert: fn }) }));
 
+/* ---------- drag & drop of data references (n8n-style) ---------- */
+export const FIELD_DRAG_MIME = 'application/x-agentic-flow-expr';
+
+/**
+ * Drop handler for a text input/textarea. Browsers insert dropped `text/plain` at the drop point and fire an
+ * input event (handled by onChange). Afterwards `apply` receives the element's final text; if the browser did
+ * not insert anything (some engines, tests), the reference is inserted at the caret / end as a fallback.
+ */
+export function referenceDropHandler(getEl: () => HTMLInputElement | HTMLTextAreaElement | null,
+                                     apply: (next: string) => void) {
+  return (e: React.DragEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const expr = e.dataTransfer?.getData(FIELD_DRAG_MIME);
+    if (!expr) return; // not one of our field chips: leave normal drop behaviour alone
+    document.body.classList.remove('af-dragging-field');
+    const el = getEl();
+    const before = el?.value ?? '';
+    const caret = el?.selectionEnd ?? before.length;
+    setTimeout(() => {
+      const after = getEl()?.value ?? before;
+      if (after !== before) apply(after);
+      else apply(before.slice(0, caret) + expr + before.slice(caret));
+      getEl()?.focus();
+    }, 0);
+  };
+}
+
 /** Values typed by users are strings; turn obvious numbers/booleans back into JSON scalars. */
 export function parseScalar(text: string): unknown {
   const t = text.trim();
@@ -185,6 +211,7 @@ export function ExpressionInput({
     'aria-label': ariaLabel,
     onFocus,
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => emit(e.target.value),
+    onDrop: referenceDropHandler(() => ref.current, emit),
     className: `field-mono ${hasExpr ? 'text-[var(--accent-hover)]' : ''}`,
   };
   return multiline ? <textarea rows={3} {...common} /> : <input {...common} />;
@@ -282,6 +309,10 @@ export function JsonTemplateEditor({
         onFocus={onFocus}
         onChange={(e) => setText(e.target.value)}
         onBlur={() => commit(text)}
+        onDrop={referenceDropHandler(() => ref.current, (next) => {
+          setText(next);
+          commit(next);
+        })}
       />
       {error && <p className="mt-1 text-[10px] text-[var(--danger)]">{error}</p>}
     </div>

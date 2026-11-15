@@ -230,7 +230,8 @@ def flow_control_definitions() -> List[NodeDefinition]:
             ai_guidance="Connect the loop body from source_port 'item' (body nodes use {{item.<field>}} and "
                         "{{loop.index}}; they must not connect to nodes outside the body) and the continuation "
                         "from source_port 'done'. After the loop read {{nodes.<loop_id>.output.results}} (one "
-                        "entry per item: the output of the body's last node).",
+                        "entry per item: the output of the body's last node). The last body node has NO outgoing "
+                        "edge - never connect a body node to an End node; put the End node after 'done'.",
             ui_fields=[
                 ConfigField(key="items", label="Items (array)", widget="expression", required=True,
                             supports_expressions=True, placeholder="{{trigger.records}}"),

@@ -107,6 +107,13 @@ body {
   .field-mono {
     @apply field font-mono;
   }
+  /* While a data field is being dragged, show where it can be dropped. */
+  body.af-dragging-field input.field-mono,
+  body.af-dragging-field textarea.field-mono,
+  body.af-dragging-field input.field:not([type='number']):not([type='checkbox']) {
+    border-style: dashed;
+    border-color: var(--accent);
+  }
   .label {
     @apply mb-1 block text-[11px] font-medium uppercase tracking-wide;
     color: var(--text-muted);

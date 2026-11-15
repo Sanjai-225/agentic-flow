@@ -380,3 +380,18 @@ def test_switch_does_not_evaluate_cases_after_the_first_match(app_client, auth_h
     err = nodes_of(detail)["switch_1"]["error"]
     assert err["category"] == "MISSING_INPUT" and "trigger.amount" in err["message"]
     assert err["field"].startswith("cases[1]")
+
+
+def test_loop_with_explicit_end_nodes_is_valid(app_client, auth_headers):
+    """AI-designed workflows list end_nodes explicitly; the loop body's last node must not count as a dead end."""
+    definition = workflow("Designer-style loop", [
+        node("manual_trigger_1", "core.manual_trigger"),
+        node("loop_1", "core.loop", {"items": "{{trigger.names}}"}),
+        node("set_1", "core.set", {"fields": [{"name": "message", "value": "Welcome {{item}}!", "type": "string"}]}),
+        node("end_1", "core.end", {"output": {"results": "{{nodes.loop_1.output.results}}"}}),
+    ], [edge("e1", "manual_trigger_1", "loop_1"), edge("e2", "loop_1", "set_1", "item"),
+        edge("e3", "loop_1", "end_1", "done")])
+    definition.update(start_nodes=["manual_trigger_1"], end_nodes=["end_1"])
+    detail = run_wf(app_client, auth_headers, definition, {"names": ["Asha", "Ravi"]})
+    assert detail["status"] == "completed", detail
+    assert [r["message"] for r in detail["output"]["results"]] == ["Welcome Asha!", "Welcome Ravi!"]

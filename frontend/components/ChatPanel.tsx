@@ -17,11 +17,47 @@ interface ChatPanelProps {
   onClose?: () => void;
 }
 
-const EXAMPLE_PROMPTS = [
-  'When run manually with an amount and a URL, fetch the URL over http only if the amount is above 100',
-  'Customer support email automation with order lookup',
-  'Invoice processing with approval and payment',
-  'Research automation with web scraping and report generation',
+/**
+ * Starter scenarios. Each prompt only uses executable nodes and is specific enough for the designer to
+ * produce a runnable workflow. "AI" scenarios need a provider credential selected in their AI nodes.
+ */
+export const EXAMPLE_PROMPTS: { title: string; description: string; prompt: string }[] = [
+  {
+    title: 'Order priority router',
+    description: 'Webhook receives an order; IF amount ≥ 1000 marks it high priority, otherwise normal.',
+    prompt:
+      'Webhook trigger receives an order JSON with order_id, customer and amount. If amount is at least 1000, set priority to "high", otherwise set priority to "normal". End with order_id, customer and priority.',
+  },
+  {
+    title: 'AI support-ticket triage',
+    description: 'Webhook ticket → AI classifies category & urgency (JSON) → Switch routes billing / technical / general. Needs an AI credential.',
+    prompt:
+      'Webhook trigger receives a support ticket with customer_email, subject and message. Use AI Generate with Gemini model gemini-3.5-flash to return JSON with category (billing, technical or general), urgency (low, medium or high) and a one-line summary. Then use a Switch on the category with cases billing, technical and general; each case uses a Set node that adds team set to the category name. End with the team, urgency, summary and customer_email.',
+  },
+  {
+    title: 'Contact form auto-reply',
+    description: 'Public form (name, email, message) → AI writes a friendly reply. Needs an AI credential.',
+    prompt:
+      'Form Submission Trigger titled "Contact us" with required fields name (text), email (email) and message (textarea). Use AI Generate with Gemini model gemini-3.5-flash to write a short friendly reply to the message, addressed to the name. End with the email and the reply.',
+  },
+  {
+    title: 'Invoice calculator agent',
+    description: 'AI Agent uses the calculator and data_aggregate tools to compute subtotal, tax and total. Needs an AI credential.',
+    prompt:
+      'Manual trigger with sample payload {"items": [{"price": 40, "qty": 2}, {"price": 25, "qty": 3}], "tax_rate": 0.18}. An AI Agent with Gemini model gemini-3.5-flash and the calculator and data_aggregate tools computes subtotal, tax and total from the trigger items and tax_rate, returning JSON with subtotal, tax and total. End with the agent result.',
+  },
+  {
+    title: 'Batch welcome messages',
+    description: 'Loop over a list of names, build a message for each, then collect the results.',
+    prompt:
+      'Manual trigger with sample payload {"names": ["Asha", "Ravi", "Meena"]}. Loop Over Items with items {{trigger.names}}. Connect the loop\'s "item" output to a Set node that builds message = "Welcome {{item}}!"; that Set node is the loop body and has no outgoing connections. Connect the loop\'s "done" output to an End node whose output is the loop results {{nodes.loop_1.output.results}}.',
+  },
+  {
+    title: 'Scheduled GitHub digest',
+    description: 'Every weekday 9:00 (IST), fetch open issues from a public GitHub repo and summarise them with AI. Needs an AI credential.',
+    prompt:
+      'Schedule Trigger on weekdays at 09:00 in timezone Asia/Kolkata. HTTP Request GET https://api.github.com/repos/vercel/next.js/issues?per_page=10. Use AI Generate with Gemini model gemini-3.5-flash to write a short digest of the issue titles from the response body. End with the digest.',
+  },
 ];
 
 /** Render inline **bold**, _italic_ and `code`. */
@@ -66,7 +102,7 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
       id: 'welcome',
       role: 'assistant',
       content:
-        "Describe an automation and I'll design it on the canvas. Generated workflows use the same schema and engine as manual ones — nodes that can't execute yet are flagged.",
+        "Describe an automation and I'll design it on the canvas. Every generated workflow is checked against the real engine before you can run it.",
     },
   ]);
   const [input, setInput] = useState('');
@@ -180,11 +216,18 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
 
       {messages.length <= 1 && (
         <div className="px-4 pb-2">
-          <p className="mb-1.5 text-[11px] text-[var(--text-muted)]">Try:</p>
-          <div className="flex flex-wrap gap-1.5">
+          <p className="mb-1.5 text-[11px] text-[var(--text-muted)]">Try a ready-to-run workflow:</p>
+          <div className="max-h-64 space-y-1.5 overflow-y-auto">
             {EXAMPLE_PROMPTS.map((p) => (
-              <button key={p} onClick={() => handleSubmit(p)} disabled={isLoading} className="btn-ghost rounded-full text-left">
-                {p}
+              <button
+                key={p.title}
+                onClick={() => handleSubmit(p.prompt)}
+                disabled={isLoading}
+                title={p.prompt}
+                className="block w-full rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-left hover:bg-[var(--surface-hover)]"
+              >
+                <span className="block text-[12px] font-medium text-[var(--text-primary)]">{p.title}</span>
+                <span className="block text-[11px] text-[var(--text-muted)]">{p.description}</span>
               </button>
             ))}
           </div>

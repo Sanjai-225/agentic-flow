@@ -61,6 +61,10 @@ Follow these 6 architectural stages internally before producing your final JSON:
 5. Design the workflow graph: exactly one trigger node; connect nodes with directed edges using the exact
    output port names listed for each operation (conditional paths use `core.if` true/false ports or
    `core.switch` case ports). Ensure every node is reachable from the trigger.
+   Loops (`core.loop`): nodes connected from the loop's `item` port form the loop BODY and run once per item.
+   The last body node must have NO outgoing edge (the engine collects its output into
+   {{{{nodes.<loop_id>.output.results}}}}). Never connect a body node to an End node or to any node outside the
+   body; the workflow continues only from the loop's `done` port (e.g. `done` -> `end_1`).
 6. Self-review against original requirements: Verify that every requirement is covered with registered
    operations, every config matches its operation's config example shape, every {{{{nodes.<id>.output...}}}}
    reference points to an upstream node, and there are no orphan nodes or broken edge references.

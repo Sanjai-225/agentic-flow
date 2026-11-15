@@ -21,7 +21,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
-export function RunDialog({ initial, onRun, onClose }: { initial: unknown; onRun: (input: unknown) => void; onClose: () => void }) {
+export function RunDialog({ initial, onRun, onClose, hint }: { initial: unknown; onRun: (input: unknown) => void; onClose: () => void; hint?: string }) {
   const [text, setText] = useState(JSON.stringify(initial ?? {}, null, 2));
   const [error, setError] = useState<string | null>(null);
   return (
@@ -29,7 +29,7 @@ export function RunDialog({ initial, onRun, onClose }: { initial: unknown; onRun
       <label className="label">Trigger payload (JSON)</label>
       <textarea aria-label="Run payload" rows={10} className="field-mono" value={text} onChange={(e) => setText(e.target.value)} />
       {error && <p className="mt-1 text-[11px] text-[var(--danger)]">{error}</p>}
-      <p className="mt-2 text-[11px] text-[var(--text-muted)]">This payload becomes the trigger output, available as {'{{trigger.<field>}}'}. The run executes on the backend.</p>
+      <p className="mt-2 text-[11px] text-[var(--text-muted)]">{hint ?? 'This payload becomes the trigger output, available as {{trigger.<field>}}. The run executes on the backend.'}</p>
       <div className="mt-4 flex justify-end gap-2">
         <button className="btn-ghost" onClick={onClose}>
           Cancel

@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/check-env.mjs",
     "build": "next build",
+    "check-env": "node scripts/check-env.mjs",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

@@ -2,10 +2,14 @@
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.deps import get_current_user
+from app.core.config import get_settings
+from app.db.session import get_sessionmaker, migration_status
 from app.db.models import User
 
 from app.schemas.workflow import GenerateWorkflowRequest
@@ -25,6 +29,30 @@ def get_workflow_generator() -> WorkflowGenerator:
 async def health_check() -> dict[str, str]:
     """Liveness check endpoint."""
     return {"status": "healthy"}
+
+
+@router.get("/health/ready", tags=["Health"])
+async def readiness_check(request: Request) -> JSONResponse:
+    """Readiness: database reachable, schema at the latest migration, scheduler state. No secrets or URLs."""
+    settings = get_settings()
+    checks: Dict[str, Any] = {"database": False, "schema_up_to_date": False}
+    try:
+        async with get_sessionmaker()() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = True
+        status_info = await run_in_threadpool(migration_status, settings.DATABASE_URL)
+        # A newer (additive-only) schema after a code rollback still serves this code.
+        checks["schema_up_to_date"] = status_info["up_to_date"] or status_info["ahead"]
+        checks["schema_ahead_of_code"] = status_info["ahead"]
+        checks["schema_revision"] = status_info["current"]
+    except Exception as exc:  # noqa: BLE001 - report the failure class only (messages may contain hosts)
+        checks["database_error"] = type(exc).__name__
+    scheduler = getattr(request.app.state, "scheduler", None)
+    checks["scheduler"] = ("running" if scheduler is not None and scheduler.running else
+                           "disabled" if not settings.SCHEDULER_ENABLED else "stopped")
+    checks["environment"] = settings.APP_ENV
+    ready = checks["database"] and checks["schema_up_to_date"]
+    return JSONResponse({"status": "ready" if ready else "not_ready", "checks": checks}, status_code=200 if ready else 503)
 
 
 @router.post(

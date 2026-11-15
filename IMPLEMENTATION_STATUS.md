@@ -2,6 +2,21 @@
 
 _Last updated: 2026-11-15 — Milestone 1 complete. **Milestone 2 implemented, validated and committed on `testing`**. One item is still open: live OpenAI and Anthropic *inference*, blocked because both provider accounts have no credit (not a code issue). Milestones 3–4 not authorized._
 
+## Production deployment package (Vercel + Render + Supabase): PREPARED, NOT DEPLOYED (uncommitted on `testing`)
+
+- **Free-tier revision.** Render `plan: free`, auto-migrate at startup, Docker removed. Free-tier limits: see `docs/PRODUCTION_DEPLOYMENT.md`.
+
+- **Prepared:**
+  - `render.yaml` (validated against the official schema) and `frontend/vercel.json`.
+  - PostgreSQL/Supabase support: asyncpg + psycopg, session pooler, TLS, pooling.
+  - RLS migration `0003`.
+  - Production config gate, `/health/ready`, configurable CORS (removed the always-on `*.vercel.app` credentialed regex).
+  - Deployment scripts in `backend/scripts/`.
+  - Optional Dockerfile.
+- **Guide:** `docs/PRODUCTION_DEPLOYMENT.md`. **Report:** `docs/DEPLOYMENT_READINESS_REPORT.md`.
+- **Validated locally:** backend 414 passed / 13 skipped; frontend 62 passed, build OK; production-like stack verify 17/19 (2 expected http-only failures) and smoke test 12/12.
+- **Open:** a real PostgreSQL run of the suite and migrations (blocked in this session), `docker build`, and the platform deployment itself.
+
 ## Milestone 2 — AI Agent, providers, AI Generate, triggers, flow nodes: VALIDATED (one external item open)
 
 All phases (0–7) are implemented, every workflow A–I passes end to end on a real running stack, and cross-provider fallback is verified **live**.

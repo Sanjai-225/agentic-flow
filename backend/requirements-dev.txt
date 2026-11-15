@@ -2,3 +2,5 @@
 pytest==9.1.1
 pytest-asyncio==1.5.0
 ruff==0.17.5
+# Deployment config checks (scripts/check_deployment_config.py)
+PyYAML==6.0.3

@@ -18,7 +18,9 @@ from app.api.webhooks import router as webhooks_router
 from app.api.workflow import router as workflow_router
 from app.api.workflows import router as workflows_router
 from app.core.config import get_settings
-from app.db.session import dispose_engine, get_sessionmaker, run_migrations
+from app.core.production import check_settings
+from app.core.production import errors as config_errors
+from app.db.session import dispose_engine, ensure_schema_current, get_sessionmaker, run_migrations
 from app.engine.scheduler import Scheduler
 from app.engine.worker import ExecutionManager
 
@@ -29,9 +31,18 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     current = get_settings()
+    issues = check_settings(current)
+    for issue in issues:
+        logger.warning("Configuration: %s", issue)
+    if current.is_production and config_errors(issues):
+        # Names only - values are never logged. See scripts/validate_environment.py.
+        raise RuntimeError("Refusing to start with APP_ENV=production: invalid configuration for "
+                           + ", ".join(sorted({i.name for i in config_errors(issues)})))
     _ = current.effective_jwt_secret  # fail fast in production without JWT_SECRET
     if current.DB_AUTO_MIGRATE:
         await asyncio.to_thread(run_migrations, current.DATABASE_URL)
+    else:
+        await asyncio.to_thread(ensure_schema_current, current.DATABASE_URL)
     manager = ExecutionManager(get_sessionmaker())
     await manager.reconcile_interrupted()
     app.state.execution_manager = manager
@@ -55,18 +66,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Browsers authenticate with a Bearer token (no cookies), so credentialed CORS is never needed.
+# Allowed origins come only from configuration: CORS_ORIGINS (exact) and the optional CORS_ORIGIN_REGEX.
 cors_kwargs: dict = {
     "allow_methods": ["*"],
     "allow_headers": ["*"],
+    "allow_credentials": False,
+    "allow_origins": ["*"] if "*" in settings.CORS_ORIGINS else settings.CORS_ORIGINS,
+    "max_age": 600,
 }
-
-if "*" in settings.CORS_ORIGINS:
-    cors_kwargs["allow_origins"] = ["*"]
-    cors_kwargs["allow_credentials"] = False
-else:
-    cors_kwargs["allow_origins"] = settings.CORS_ORIGINS
-    cors_kwargs["allow_credentials"] = True
-    cors_kwargs["allow_origin_regex"] = r"https://.*\.vercel\.app"
+if settings.CORS_ORIGIN_REGEX:
+    cors_kwargs["allow_origin_regex"] = settings.CORS_ORIGIN_REGEX
 
 app.add_middleware(CORSMiddleware, **cors_kwargs)
 

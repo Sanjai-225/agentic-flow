@@ -15,7 +15,8 @@ if config.config_file_name is not None and config.attributes.get("configure_logg
     fileConfig(config.config_file_name)
 
 if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", sync_database_url(get_settings().DATABASE_URL))
+    # Doubled '%': ConfigParser interpolation (URL-encoded passwords).
+    config.set_main_option("sqlalchemy.url", sync_database_url(get_settings().DATABASE_URL).replace("%", "%%"))
 
 target_metadata = Base.metadata
 

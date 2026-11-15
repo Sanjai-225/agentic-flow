@@ -1,20 +1,19 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
 
-export const dynamic = "force-dynamic";
+import { BACKEND_NOT_CONFIGURED, resolveBackendUrl } from '@/lib/backendUrl';
 
+export const dynamic = 'force-dynamic';
+
+/** Frontend health: reports whether this deployment can reach the backend's liveness endpoint. */
 export async function GET() {
-  const backendBase = process.env.BACKEND_URL || "http://127.0.0.1:8000";
+  const backendBase = resolveBackendUrl();
+  if (!backendBase) return NextResponse.json({ status: 'unhealthy', detail: BACKEND_NOT_CONFIGURED }, { status: 503 });
 
   try {
-    const targetUrl = new URL("/health", backendBase);
-    const response = await fetch(targetUrl);
+    const response = await fetch(new URL('/health', backendBase), { cache: 'no-store' });
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (err: any) {
-    return NextResponse.json(
-      { status: "unhealthy", detail: err?.message || "Unknown error" },
-      { status: 502 }
-    );
+    return NextResponse.json({ status: 'unhealthy', detail: err?.message || 'Unknown error' }, { status: 502 });
   }
 }
-

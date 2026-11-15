@@ -58,7 +58,7 @@ agentic-flow/
 │   ├── types/
 │   │   └── workflow.ts                 # TypeScript interfaces
 │   ├── package.json
-│   └── .env.local.example
+│   └── .env.example
 ├── agent.md                            # AI agent instructions for contributors
 ├── .gitignore
 └── README.md
@@ -104,8 +104,8 @@ cd frontend
 npm install
 
 # Configure environment
-copy .env.local.example .env.local    # Windows
-# cp .env.local.example .env.local    # macOS/Linux
+copy .env.example .env.local    # Windows
+# cp .env.example .env.local    # macOS/Linux
 
 # Start the frontend
 npm run dev

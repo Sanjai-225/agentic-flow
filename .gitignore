@@ -43,3 +43,10 @@ venv/
 
 # IDE
 .vscode/
+
+# Local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.ruff_cache/

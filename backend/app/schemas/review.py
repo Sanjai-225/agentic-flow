@@ -1,7 +1,7 @@
 """Pydantic schemas for the workflow semantic review system."""
 
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List
 
 from pydantic import BaseModel, Field, field_validator
 

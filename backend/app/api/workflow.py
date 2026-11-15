@@ -3,6 +3,10 @@
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
+
+from app.api.deps import get_current_user
+from app.db.models import User
 
 from app.schemas.workflow import GenerateWorkflowRequest
 from app.services.llm_service import LLMConfigurationError, LLMGenerationError
@@ -30,13 +34,16 @@ async def health_check() -> dict[str, str]:
 async def generate_workflow(
     payload: GenerateWorkflowRequest,
     generator: WorkflowGenerator = Depends(get_workflow_generator),
+    _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Generate, validate, and optionally review a workflow graph from a natural-language prompt.
 
     Returns the workflow JSON with optional semantic review metadata.
     """
     try:
-        return generator.generate(prompt=payload.prompt, enable_review=payload.review)
+        # The generator performs blocking network I/O; keep it off the event loop so
+        # running workflow executions are not stalled.
+        return await run_in_threadpool(generator.generate, prompt=payload.prompt, enable_review=payload.review)
     except LLMConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

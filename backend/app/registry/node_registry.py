@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
+from app.registry.executable_nodes import executable_definitions, planned_definitions
 from app.schemas.registry import (
     NodeCategory,
     NodeDefinition,
@@ -14,22 +15,58 @@ from app.schemas.registry import (
 
 
 class NodeRegistry:
-    """In-memory registry of supported workflow node definitions."""
+    """In-memory registry of node definitions keyed by stable operation id.
+
+    Lookups resolve, in order: operation id, legacy node_type, then aliases.
+    Registering a definition supersedes any earlier definition whose node_type
+    it claims (as node_type or alias), so executable operations replace their
+    legacy design-only counterparts.
+    """
 
     def __init__(self) -> None:
         self._nodes: Dict[str, NodeDefinition] = {}
+        self._lookup: Dict[str, str] = {}
+
+    @staticmethod
+    def _norm(key: str) -> str:
+        return key.strip().lower()
 
     def register(self, definition: NodeDefinition) -> None:
-        """Register a new node definition."""
-        self._nodes[definition.node_type] = definition
+        """Register a node definition (superseding legacy entries it aliases)."""
+        claimed = {self._norm(definition.node_type), *(self._norm(a) for a in definition.aliases)}
+        for op_id, existing in list(self._nodes.items()):
+            if op_id != definition.operation_id and self._norm(existing.node_type) in claimed:
+                del self._nodes[op_id]
+        self._nodes[definition.operation_id] = definition
+        self._rebuild_lookup()
 
-    def get(self, node_type: str) -> Optional[NodeDefinition]:
-        """Look up a node definition by its unique type name."""
-        return self._nodes.get(node_type.strip().lower())
+    def _rebuild_lookup(self) -> None:
+        lookup: Dict[str, str] = {}
+        # Lowest precedence first so higher-precedence keys overwrite.
+        for op_id, node in self._nodes.items():
+            for alias in node.aliases:
+                lookup[self._norm(alias)] = op_id
+        for op_id, node in self._nodes.items():
+            lookup[self._norm(node.node_type)] = op_id
+        for op_id in self._nodes:
+            lookup[self._norm(op_id)] = op_id
+        self._lookup = lookup
+
+    def get(self, key: str) -> Optional[NodeDefinition]:
+        """Look up a definition by operation id, legacy node_type or alias."""
+        op_id = self._lookup.get(self._norm(key))
+        return self._nodes.get(op_id) if op_id else None
+
+    def get_operation(self, operation_id: str) -> Optional[NodeDefinition]:
+        """Strict lookup by operation id only (used by the planner and engine)."""
+        return self._nodes.get(operation_id.strip())
 
     def list_all(self) -> List[NodeDefinition]:
         """Return all registered node definitions."""
         return list(self._nodes.values())
+
+    def list_executable(self) -> List[NodeDefinition]:
+        return [n for n in self._nodes.values() if n.executable]
 
     def list_by_category(self, category: NodeCategory | str) -> List[NodeDefinition]:
         """Return node definitions belonging to a specific category."""
@@ -44,14 +81,23 @@ class NodeRegistry:
         """Format a concise, token-efficient knowledge representation of the registry for LLM system prompts."""
         lines = [
             "STANDARD NODE REGISTRY (Use these standard node types when designing workflows):",
-            "Categories and available node types:",
+            "",
+            "EXECUTABLE OPERATIONS (these can actually run; prefer them whenever they satisfy the requirement):",
         ]
+        for node in self.list_executable():
+            fields = ", ".join(f.key for f in node.ui_fields) or "none"
+            ports = "/".join(node.ports_out) or "none"
+            lines.append(
+                f"- operation `{node.operation_id}` (type `{node.node_type}`, {node.label}): {node.description} "
+                f"| config keys: [{fields}] | output ports: [{ports}]"
+            )
 
-        # Group by category
+        lines.append("\nDESIGN-ONLY NODE TYPES (can be drawn but cannot execute yet):")
         grouped: Dict[str, List[NodeDefinition]] = {}
         for node in self._nodes.values():
-            cat = node.category.value
-            grouped.setdefault(cat, []).append(node)
+            if node.executable:
+                continue
+            grouped.setdefault(node.category.value, []).append(node)
 
         for cat, nodes in sorted(grouped.items()):
             lines.append(f"\n### Category: {cat.upper().replace('_', ' ')}")
@@ -69,12 +115,16 @@ class NodeRegistry:
 
         lines.append(
             "\nREGISTRY USAGE RULES:\n"
-            "1. When an operation matches a registered node type, use the exact `type` string above.\n"
+            "1. When an operation matches a registered node type, use the exact `type` string above, and for "
+            "executable operations also set `operation` to the exact operation id (e.g. \"core.set\").\n"
             "2. If an external service is needed (e.g. Gmail, Slack, Stripe, Jira, GitHub, PostgreSQL), "
             "set `tool`: {\"name\": \"<Service>\", \"operation\": \"<action>\", \"status\": \"not_connected\"}.\n"
             "3. If a novel or domain-specific requirement cannot be cleanly represented by the registry, "
             "you may invent a descriptive snake_case `type` (e.g., `document_ocr`, `compliance_validator`), "
-            "following the same input/output and tool patterns."
+            "following the same input/output and tool patterns. Such nodes are design-only and will not execute.\n"
+            "4. Reference upstream data in config values with {{nodes.<node_id>.output.<field>}}, the trigger "
+            "payload with {{trigger.<field>}}, and the previous node's output with {{input.<field>}}.\n"
+            "5. Edges leaving a `core.if` node must set `source_port` to \"true\" or \"false\"."
         )
         return "\n".join(lines)
 
@@ -622,6 +672,13 @@ def _create_standard_registry() -> NodeRegistry:
             tags=["human", "approval", "review", "signoff", "manager"],
         )
     )
+
+    # Planned (design-only) control-flow/data nodes and executable operations.
+    # Executable definitions supersede the legacy design entries they alias.
+    for definition in planned_definitions():
+        registry.register(definition)
+    for definition in executable_definitions():
+        registry.register(definition)
 
     return registry
 

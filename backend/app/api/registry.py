@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.registry.node_registry import NodeRegistry, get_default_registry
-from app.schemas.registry import NodeCategory, NodeDefinition, RegistryCatalogResponse
+from app.schemas.registry import NodeDefinition, RegistryCatalogResponse
 
 router = APIRouter(prefix="/api/registry", tags=["Node Registry"])
 

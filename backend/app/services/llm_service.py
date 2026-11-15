@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import List, Optional
+from typing import Optional
 import urllib.error
 import urllib.request
 
@@ -40,7 +40,7 @@ Follow these 6 architectural stages internally before producing your final JSON:
 3. Identify appropriate nodes from registry:
    - Select matching node types from the standard Node Registry above whenever applicable (e.g. `webhook_trigger`, `schedule_trigger`, `email_trigger`, `manual_trigger`, `email_output`, `notification_output`, `webhook_output`, `llm_agent`, `text_classifier`, `entity_extractor`, `summarizer`, `api_call`, `database_query`, `database_update`, `file_operation`, `tool_integration`, `condition`, `switch`, `loop`, `error_handler`, `data_transform`, `filter`, `code_execution`, `vector_search`, `knowledge_retrieval`, `human_approval`, etc.).
    - If an operation requires a novel or domain-specific capability not in the registry (e.g. `document_ocr`, `audio_transcription`), invent a descriptive snake_case type following the same semantic patterns.
-4. Identify tools/integrations: Whenever a node interacts with an external service or tool (e.g., Gmail, Slack, GitHub, PostgreSQL, Stripe, OpenAI, Jira, Notion, etc.), populate its `tool` object with `name`, `operation`, and `"status": "not_connected"` (because this is design-only).
+4. Identify tools/integrations: Whenever a node interacts with an external service or tool (e.g., Gmail, Slack, GitHub, PostgreSQL, Stripe, OpenAI, Jira, Notion, etc.), populate its `tool` object with `name`, `operation`, and `"status": "not_connected"` (application integrations are not connected yet; such nodes are design-only).
 5. Design the workflow graph: Connect nodes with directed edges supporting sequential flows, parallel branches, and conditional paths (using `label` and `condition` on edges). Ensure every node is reachable from `start_nodes` and can reach at least one node in `end_nodes`.
 6. Self-review against original requirements: Verify that every requirement, edge case, and integration from the prompt is covered and that there are no orphan nodes, broken edge references, or missing terminal paths.
 
@@ -59,6 +59,7 @@ STRICT OUTPUT RULES:
     {{
       "id": "node_1",
       "type": "webhook_trigger",
+      "operation": "core.webhook_trigger",
       "label": "Human Readable Label",
       "description": "What this step does.",
       "config": {{}},
@@ -74,6 +75,7 @@ STRICT OUTPUT RULES:
       "id": "edge_1",
       "source": "node_1",
       "target": "node_2",
+      "source_port": "main",
       "label": "Optional label",
       "condition": "Optional condition expression"
     }}
@@ -82,6 +84,9 @@ STRICT OUTPUT RULES:
   "end_nodes": ["node_N"]
 }}
 Note: `tool` on a node is optional (omit or set to null if no external tool is used). `label` and `condition` on an edge are optional.
+`operation` must be an EXECUTABLE operation id from the registry when one fits; omit it for design-only types.
+For executable operations, `config` must use only that operation's config keys. Edges leaving a `core.if` node
+must set `source_port` to "true" or "false"; all other edges use "main".
 """
 
 

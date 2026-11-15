@@ -159,8 +159,22 @@ class WorkflowGenerator:
 
     @staticmethod
     def _build_response(workflow: WorkflowSchema) -> Dict[str, Any]:
-        """Build the base response dict from a WorkflowSchema."""
-        data = workflow.model_dump()
+        """Build the base response dict from a WorkflowSchema.
+
+        The workflow is upgraded to the canonical v2 schema (registry operations,
+        ports) and annotated with a deterministic execution-readiness report so
+        the user sees which nodes can actually run.
+        """
+        from app.engine.planner import plan_workflow
+        from app.services.workflow_upgrade import upgrade_workflow
+
+        workflow = upgrade_workflow(workflow)
+        data = workflow.model_dump(mode="json")
+        plan = plan_workflow(workflow)
+        data["execution_readiness"] = {
+            "executable": plan.valid,
+            "issues": [issue.model_dump(mode="json") for issue in plan.issues],
+        }
         data["review_status"] = None
         data["review_summary"] = None
         data["review_issues"] = None

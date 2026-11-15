@@ -11,10 +11,8 @@ from app.schemas.registry import (
     PortDataType,
     PortDefinition,
     PortType,
-    ToolDefinition,
 )
 from app.services.llm_service import (
-    LLMService,
     WORKFLOW_ARCHITECT_SYSTEM_PROMPT,
     build_architect_system_prompt,
 )
@@ -182,7 +180,7 @@ def test_reviewer_system_prompt_includes_registry():
     prompt = build_reviewer_system_prompt()
     assert "STANDARD NODE REGISTRY" in prompt
     assert "Operation Correctness & Node Registry Alignment" in prompt
-    assert "REVIEWER_SYSTEM_PROMPT" is not None
+    assert "REVIEWER_SYSTEM_PROMPT" != None
     assert "STANDARD NODE REGISTRY" in REVIEWER_SYSTEM_PROMPT
 
 

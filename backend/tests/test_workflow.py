@@ -11,7 +11,7 @@ Covers:
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
@@ -556,8 +556,29 @@ def test_model_separation_configuration():
 # ---------------------------------------------------------------------------
 # 7. API Endpoint Integration Test
 # ---------------------------------------------------------------------------
-def test_generate_endpoint_validation_error(client: TestClient) -> None:
+def test_generate_endpoint_validation_error(app_client: TestClient, auth_headers: dict) -> None:
     # Prompt is too short (< 3 chars)
     payload = {"prompt": "ab"}
-    response = client.post("/api/workflows/generate", json=payload)
+    response = app_client.post("/api/workflows/generate", json=payload, headers=auth_headers)
     assert response.status_code == 422
+
+
+def test_generate_endpoint_requires_authentication(app_client: TestClient) -> None:
+    response = app_client.post("/api/workflows/generate", json={"prompt": "Build a workflow"})
+    assert response.status_code == 401
+
+
+def test_generate_endpoint_returns_canonical_v2_with_readiness(app_client: TestClient, auth_headers: dict) -> None:
+    response = app_client.post(
+        "/api/workflows/generate",
+        json={"prompt": "Create an invoice processing pipeline with approvals"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == 2
+    assert all(node["operation"] for node in body["nodes"])
+    # The invoice mock uses external tools that have no executable implementation yet,
+    # so readiness must say so explicitly instead of pretending it can run.
+    assert body["execution_readiness"]["executable"] is False
+    assert any(i["category"] == "UNSUPPORTED_CAPABILITY" for i in body["execution_readiness"]["issues"])

@@ -5,7 +5,7 @@ clearly marked with '[MOCK DEV MODE]' in its name and description so it is never
 confused with real LLM-generated output.
 """
 
-from typing import List
+import re
 import uuid
 
 from app.schemas.workflow import EdgeSchema, NodeSchema, ToolSchema, WorkflowSchema
@@ -15,6 +15,9 @@ def generate_mock_workflow(prompt: str) -> WorkflowSchema:
     """Generate a valid, domain-appropriate mock workflow for local testing."""
     prompt_lower = prompt.lower()
     wf_id = f"mock-{uuid.uuid4().hex[:8]}"
+
+    if re.search(r"\b(http|fetch|endpoint|url|api request)\b", prompt_lower):
+        return _executable_http_workflow(wf_id)
 
     if "invoice" in prompt_lower or "expense" in prompt_lower or "billing" in prompt_lower:
         return WorkflowSchema(
@@ -340,4 +343,50 @@ def generate_mock_workflow(prompt: str) -> WorkflowSchema:
         ],
         start_nodes=["node_receive_email"],
         end_nodes=["node_send_email"],
+    )
+
+
+def _executable_http_workflow(wf_id: str) -> WorkflowSchema:
+    """Mock design that uses only executable registry operations (Manual -> Set -> If -> HTTP/End)."""
+    return WorkflowSchema(
+        workflow_id=wf_id,
+        workflow_name="[MOCK DEV MODE] Conditional HTTP Fetch",
+        description=(
+            "[MOCK DEV MODE - No GEMINI_API_KEY configured] Reads an amount and URL from the run payload, "
+            "fetches the URL when the amount exceeds 100, and returns the response."
+        ),
+        nodes=[
+            NodeSchema(id="trigger_1", type="manual_trigger", operation="core.manual_trigger",
+                       label="Start Manually", description="Run payload: {\"amount\": number, \"url\": string}.",
+                       config={"sample_payload": {"amount": 150, "url": "https://httpbin.org/get"}}),
+            NodeSchema(id="set_1", type="set_variable", operation="core.set", label="Prepare Request",
+                       description="Copies amount and target URL from the trigger payload.",
+                       config={"fields": [
+                           {"name": "amount", "value": "{{trigger.amount}}", "type": "number"},
+                           {"name": "target_url", "value": "{{trigger.url}}", "type": "string"},
+                       ], "keep_input": False}),
+            NodeSchema(id="if_1", type="condition", operation="core.if", label="Amount Above 100?",
+                       description="Routes to the HTTP call only for large amounts.",
+                       config={"conditions": {"combinator": "all", "rules": [
+                           {"left": "{{nodes.set_1.output.amount}}", "operator": "gt", "right": 100}]}}),
+            NodeSchema(id="http_1", type="api_call", operation="http.request", label="Fetch URL",
+                       description="GET request to the target URL.",
+                       config={"method": "GET", "url": "{{nodes.set_1.output.target_url}}", "timeout_seconds": 15}),
+            NodeSchema(id="end_fetched", type="end", operation="core.end", label="Return Response",
+                       description="Returns the HTTP status and body.",
+                       config={"output": {"status": "{{nodes.http_1.output.status_code}}",
+                                          "body": "{{nodes.http_1.output.body}}"}}),
+            NodeSchema(id="end_skipped", type="end", operation="core.end", label="Skip Small Amounts",
+                       description="Returns without calling the URL.",
+                       config={"output": {"skipped": True, "amount": "{{nodes.set_1.output.amount}}"}}),
+        ],
+        edges=[
+            EdgeSchema(id="e1", source="trigger_1", target="set_1"),
+            EdgeSchema(id="e2", source="set_1", target="if_1"),
+            EdgeSchema(id="e3", source="if_1", target="http_1", source_port="true", label="true"),
+            EdgeSchema(id="e4", source="http_1", target="end_fetched"),
+            EdgeSchema(id="e5", source="if_1", target="end_skipped", source_port="false", label="false"),
+        ],
+        start_nodes=["trigger_1"],
+        end_nodes=["end_fetched", "end_skipped"],
     )

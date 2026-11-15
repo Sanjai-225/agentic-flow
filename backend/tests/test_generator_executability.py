@@ -62,14 +62,40 @@ def test_unfixable_configs_return_design_with_honest_readiness():
     assert result["nodes"][1]["operation"] == "core.set"
 
 
-def test_design_only_nodes_do_not_trigger_repair():
+def test_unsupported_nodes_trigger_bounded_repair_and_are_reported():
+    """Milestone 2: the designer must only use registered operations; legacy/invented types are sent back for a
+    bounded number of repairs and, if they persist, readiness reports them (never remapped silently)."""
     llm = MagicMock()
-    llm.generate_workflow_json.return_value = json.dumps({
+    legacy = json.dumps({
         "workflow_id": "gen", "workflow_name": "Design",
         "nodes": [{"id": "t", "type": "manual_trigger", "label": "Start"},
                   {"id": "a", "type": "llm_agent", "label": "Agent"}],
         "edges": [{"id": "e1", "source": "t", "target": "a"}], "start_nodes": ["t"], "end_nodes": ["a"],
     })
+    llm.generate_workflow_json.return_value = legacy
+    llm.fix_workflow_json.return_value = legacy
     result = WorkflowGenerator(llm_service=llm, settings=_settings()).generate("x", enable_review=False)
-    assert not llm.fix_workflow_json.called
+    assert llm.fix_workflow_json.call_count == 2  # bounded by MAX_GENERATION_RETRIES
+    errors = llm.fix_workflow_json.call_args.kwargs["validation_errors"]
+    assert any("UNSUPPORTED_CAPABILITY" in e and "do not invent node types" in e for e in errors)
     assert result["execution_readiness"]["executable"] is False
+    assert next(n for n in result["nodes"] if n["id"] == "a")["operation"] == "unsupported:llm_agent"
+
+
+def test_unsupported_node_repaired_into_registered_operation():
+    llm = MagicMock()
+    llm.generate_workflow_json.return_value = json.dumps({
+        "workflow_id": "gen", "workflow_name": "Design",
+        "nodes": [{"id": "t", "type": "manual_trigger", "label": "Start"},
+                  {"id": "a", "type": "summarizer", "label": "Summarize"}],
+        "edges": [{"id": "e1", "source": "t", "target": "a"}], "start_nodes": ["t"], "end_nodes": ["a"],
+    })
+    llm.fix_workflow_json.return_value = json.dumps({
+        "workflow_id": "gen", "workflow_name": "Design",
+        "nodes": [{"id": "t", "type": "manual_trigger", "operation": "core.manual_trigger", "label": "Start"},
+                  {"id": "end_1", "type": "end", "operation": "core.end", "label": "Done"}],
+        "edges": [{"id": "e1", "source": "t", "target": "end_1"}], "start_nodes": ["t"], "end_nodes": ["end_1"],
+    })
+    result = WorkflowGenerator(llm_service=llm, settings=_settings()).generate("x", enable_review=False)
+    assert llm.fix_workflow_json.call_count == 1
+    assert result["execution_readiness"]["executable"] is True

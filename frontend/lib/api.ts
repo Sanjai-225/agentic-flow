@@ -2,8 +2,18 @@
 
 import { clearSession, getToken } from '@/lib/auth';
 import type {
+  AgentToolInfo,
+  AIProviderInfo,
   CredentialSummary,
+  CredentialTestResult,
+  CredentialTypeSpec,
+  FormInfo,
+  PublicForm,
+  ScheduleInfo,
+  SchedulePreview,
   ExecutionDetail,
+  InferredOutputFields,
+  LegacyNodeType,
   ExecutionSummary,
   RegistryCatalogResponse,
   ValidationResult,
@@ -32,7 +42,10 @@ export class ApiError extends Error {
 function messageFromDetail(detail: any, fallback: string): string {
   if (!detail) return fallback;
   if (typeof detail === 'string') return detail;
-  if (typeof detail.message === 'string') return detail.message;
+  if (typeof detail.message === 'string') {
+    // Structured errors (e.g. AI designer failures) carry a concrete next step.
+    return typeof detail.suggestion === 'string' && detail.suggestion ? `${detail.message} ${detail.suggestion}` : detail.message;
+  }
   if (Array.isArray(detail)) {
     return detail.map((d: any) => `${(d.loc || []).slice(1).join('.')}: ${d.msg}`).join('; ');
   }
@@ -86,6 +99,7 @@ export const api = {
   me: () => request<{ id: string; email: string }>('/api/auth/me'),
 
   registry: () => request<RegistryCatalogResponse>('/api/registry/nodes'),
+  legacyNodeTypes: () => request<LegacyNodeType[]>('/api/registry/legacy'),
   generate: (prompt: string) =>
     request<WorkflowResponse>('/api/workflows/generate', { method: 'POST', body: json({ prompt }) }),
 
@@ -98,6 +112,11 @@ export const api = {
   deleteWorkflow: (id: string) => request<void>(`/api/workflows/${id}`, { method: 'DELETE' }),
   validate: (definition: WorkflowDefinition) =>
     request<ValidationResult>('/api/workflows/validate', { method: 'POST', body: json({ definition }) }),
+  outputFields: (definition: WorkflowDefinition) =>
+    request<{ nodes: Record<string, InferredOutputFields> }>('/api/workflows/output-fields', {
+      method: 'POST',
+      body: json({ definition }),
+    }),
   run: (id: string, input: unknown) =>
     request<{ execution_id: string; status: string }>(`/api/workflows/${id}/run`, {
       method: 'POST',
@@ -113,6 +132,57 @@ export const api = {
   createCredential: (type: string, name: string, data: Record<string, string>) =>
     request<CredentialSummary>('/api/credentials', { method: 'POST', body: json({ type, name, data }) }),
   deleteCredential: (id: string) => request<void>(`/api/credentials/${id}`, { method: 'DELETE' }),
+  credentialTypeSpecs: () => request<CredentialTypeSpec[]>('/api/credentials/type-specs'),
+  updateCredential: (id: string, patch: { name?: string; data?: Record<string, string> }) =>
+    request<CredentialSummary>(`/api/credentials/${id}`, { method: 'PUT', body: json(patch) }),
+  testCredential: (id: string) => request<CredentialTestResult>(`/api/credentials/${id}/test`, { method: 'POST' }),
+
+  aiProviders: () => request<AIProviderInfo[]>('/api/ai/providers'),
+  aiTools: () => request<AgentToolInfo[]>('/api/ai/tools'),
+
+  setActive: (id: string, active: boolean) =>
+    request<WorkflowSummary>(`/api/workflows/${id}/active`, { method: 'PATCH', body: json({ active }) }),
+  listForms: (id: string) => request<FormInfo[]>(`/api/workflows/${id}/forms`),
+  rotateForm: (id: string, nodeId: string) =>
+    request<FormInfo>(`/api/workflows/${id}/forms/${encodeURIComponent(nodeId)}/rotate`, { method: 'POST' }),
+  listSchedules: (id: string) => request<ScheduleInfo[]>(`/api/workflows/${id}/schedules`),
+  schedulePreview: (config: Record<string, any>) =>
+    request<SchedulePreview>('/api/workflows/schedule-preview', { method: 'POST', body: json({ config }) }),
+};
+
+/* ---------------- Public (unauthenticated) form API ----------------
+ * Never attaches the editor's token and never redirects to /login: visitors are anonymous. */
+export type PublicSubmitResult =
+  | { ok: true; message: string }
+  | { ok: false; status: number; message: string; errors: Record<string, string> };
+
+export const publicForms = {
+  async get(formId: string): Promise<PublicForm> {
+    const res = await fetch(`${API_BASE_URL}/api/public/forms/${encodeURIComponent(formId)}`);
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiError(res.status, messageFromDetail(body?.detail, 'This form is not available.'), body?.detail);
+    return body as PublicForm;
+  },
+  async submit(formId: string, data: Record<string, unknown>, honeypot: string): Promise<PublicSubmitResult> {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE_URL}/api/public/forms/${encodeURIComponent(formId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data, _hp: honeypot }),
+      });
+    } catch {
+      return { ok: false, status: 0, message: 'Could not reach the server. Check your connection and try again.', errors: {} };
+    }
+    const body = await res.json().catch(() => null);
+    if (res.ok && body?.ok) return { ok: true, message: body.message };
+    return {
+      ok: false,
+      status: res.status,
+      message: body?.message || messageFromDetail(body?.detail, `Submission failed (${res.status}).`),
+      errors: body?.errors || {},
+    };
+  },
 };
 
 /**
@@ -122,12 +192,14 @@ export const api = {
 export async function pollExecution(
   executionId: string,
   onUpdate: (detail: ExecutionDetail) => void,
-  opts: { intervalMs?: number; signal?: AbortSignal; fetcher?: (id: string) => Promise<ExecutionDetail> } = {},
+  opts: { intervalMs?: number; signal?: AbortSignal; fetcher?: (id: string) => Promise<ExecutionDetail>; maxDurationMs?: number } = {},
 ): Promise<ExecutionDetail | null> {
   const interval = opts.intervalMs ?? 750;
   const fetcher = opts.fetcher ?? api.getExecution;
+  // Polling is bounded: a run that is paused/waiting (future milestones) or stuck never polls forever.
+  const stopAt = Date.now() + (opts.maxDurationMs ?? 30 * 60 * 1000);
   for (;;) {
-    if (opts.signal?.aborted) return null;
+    if (opts.signal?.aborted || Date.now() > stopAt) return null;
     const detail = await fetcher(executionId);
     if (opts.signal?.aborted) return null;
     onUpdate(detail);

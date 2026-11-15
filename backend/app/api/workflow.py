@@ -9,6 +9,7 @@ from app.api.deps import get_current_user
 from app.db.models import User
 
 from app.schemas.workflow import GenerateWorkflowRequest
+from app.services.llm_errors import classify_llm_error
 from app.services.llm_service import LLMConfigurationError, LLMGenerationError
 from app.services.workflow_generator import WorkflowGenerationError, WorkflowGenerator
 
@@ -47,7 +48,7 @@ async def generate_workflow(
     except LLMConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail=classify_llm_error(exc).to_detail(),
         ) from exc
     except WorkflowGenerationError as exc:
         raise HTTPException(
@@ -58,7 +59,10 @@ async def generate_workflow(
             },
         ) from exc
     except LLMGenerationError as exc:
+        # Structured, secret-free detail: {category, message, suggestion, status_code, model}.
+        detail = classify_llm_error(exc).to_detail()
+        detail["message"] = str(exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=detail,
         ) from exc

@@ -21,6 +21,7 @@ import {
 import type {
   ExecutionDetail,
   ExecutionSummary,
+  LegacyNodeType,
   NodeDefinition,
   ValidationResult,
   WorkflowDefinition,
@@ -31,6 +32,8 @@ export type BottomTab = 'execution' | 'history' | 'problems';
 
 interface EditorState {
   workflowId: string | null;
+  /** Saved workflow's activation state (webhook/form/schedule triggers only fire when active). */
+  active: boolean;
   name: string;
   description: string;
   version: number;
@@ -40,6 +43,10 @@ interface EditorState {
   selectedNodeId: string | null;
   registry: NodeDefinition[];
   registryByOp: Record<string, NodeDefinition>;
+  /** Category order as reported by the backend registry. */
+  categories: string[];
+  /** Removed node types, used to label preserved legacy nodes in old workflows. */
+  legacyTypes: Record<string, LegacyNodeType>;
   validation: ValidationResult | null;
   execution: ExecutionDetail | null;
   executions: ExecutionSummary[];
@@ -73,10 +80,12 @@ interface EditorState {
   setBottom: (open: boolean, tab?: BottomTab) => void;
   inspectNode: (id: string | null) => void;
   setNotice: (n: EditorState['notice']) => void;
+  setActive: (active: boolean) => Promise<void>;
 }
 
 const initial = {
   workflowId: null,
+  active: true,
   name: 'Untitled workflow',
   description: '',
   version: 0,
@@ -110,13 +119,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   ...initial,
   registry: [],
   registryByOp: {},
+  categories: [],
+  legacyTypes: {},
 
   loadRegistry: async () => {
     if (get().registry.length) return;
-    const catalog = await api.registry();
+    const [catalog, legacy] = await Promise.all([
+      api.registry(),
+      // Labels for legacy nodes are a nicety; the editor still works (and still blocks them) without them.
+      api.legacyNodeTypes().catch(() => [] as LegacyNodeType[]),
+    ]);
     const byOp: Record<string, NodeDefinition> = {};
     catalog.nodes.forEach((n) => (byOp[n.operation_id] = n));
-    set({ registry: catalog.nodes, registryByOp: byOp });
+    const legacyTypes: Record<string, LegacyNodeType> = {};
+    (legacy || []).forEach((l) => (legacyTypes[l.node_type] = l));
+    set({ registry: catalog.nodes, registryByOp: byOp, categories: catalog.categories || [], legacyTypes });
   },
 
   reset: () => {
@@ -146,7 +163,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   loadWorkflow: async (id) => {
     const record = await api.getWorkflow(id);
     get().loadDefinition(record.definition, { workflowId: record.id, version: record.version, dirty: false });
-    set({ validation: record.validation });
+    set({ validation: record.validation, active: record.active !== false });
     await get().refreshHistory();
   },
 
@@ -245,6 +262,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         workflowId: record.id,
         version: record.version,
         dirty: false,
+        active: record.active !== false,
         validation: record.validation,
         notice: { kind: 'success', text: `Saved version ${record.version}.` },
       });
@@ -355,4 +373,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setBottom: (open, tab) => set({ bottomOpen: open, ...(tab ? { bottomTab: tab } : {}) }),
   inspectNode: (id) => set({ inspectedNodeId: id, bottomOpen: true, bottomTab: 'execution' }),
   setNotice: (n) => set({ notice: n }),
+
+  setActive: async (active: boolean) => {
+    const id = get().workflowId;
+    if (!id) {
+      set({ notice: { kind: 'error', text: 'Save the workflow before activating it.' } });
+      return;
+    }
+    try {
+      const summary = await api.setActive(id, active);
+      set({
+        active: summary.active !== false,
+        notice: { kind: 'success', text: active ? 'Workflow activated: webhook, form and schedule triggers are live.' : 'Workflow deactivated: automatic triggers are paused.' },
+      });
+    } catch (err) {
+      set({ notice: { kind: 'error', text: `Could not change activation: ${errorText(err)}` } });
+    }
+  },
 }));

@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from enum import Enum
-from typing import Any, Callable, ClassVar, Dict, List, Mapping, Optional, Protocol, Type
+from typing import Any, Awaitable, Callable, ClassVar, Dict, List, Mapping, Optional, Protocol, Set, Type
 
 from pydantic import BaseModel, Field
 
@@ -59,7 +59,8 @@ class NodeExecutionResult(BaseModel):
 
 
 class CredentialAccessor(Protocol):
-    async def get(self, credential_id: str, expected_types: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def get(self, credential_id: str, expected_types: Optional[List[str]] = None,
+                  field: str = "auth.credential_id") -> Dict[str, Any]:
         """Return decrypted credential data owned by the executing user, or raise NodeExecutionError."""
         ...
 
@@ -116,6 +117,14 @@ class ExecutionContext:
     attempt: int = 1
     resolve: Optional[Callable[[Any, str, Optional[Dict[str, Any]]], Any]] = None
     settings: Any = None
+    # Async callback persisting one AI usage record (provider, model, tokens, ...) for this node; None in
+    # unit tests. Records are always associated with this execution, node and user by the runner.
+    usage_sink: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
+    # Secret values resolved while running this node (e.g. provider API keys). The runner scrubs them from the
+    # recorded output, metadata, logs and errors. Executors add every secret they decrypt.
+    secrets: Set[str] = field(default_factory=set)
+    # Active incoming connections grouped by target port ({port: [{"source": node_id, "output": ...}]}).
+    inputs_by_port: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     @property
     def cancelled(self) -> bool:

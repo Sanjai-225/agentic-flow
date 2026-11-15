@@ -6,7 +6,8 @@ Roots:
 - ``nodes.<node_id>.output...``  output of an upstream node
 - ``trigger...``                 output of the workflow's trigger node
 - ``input...``                   output of the immediate active predecessor(s)
-- ``item...``                    current item (Filter rules only)
+- ``item...``                    current item (Filter rules, Loop Over Items body)
+- ``loop.index`` / ``loop.count`` position inside a Loop Over Items body
 - ``execution.id`` / ``workflow.id`` / ``workflow.version`` / ``workflow.name``
 
 Paths support ``.name``, ``[index]`` and ``["key"]`` segments. A string made of
@@ -19,10 +20,11 @@ current execution's state (``ResolutionScope``) is visible.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 from app.core.errors import ErrorCategory, NodeExecutionError
 
@@ -31,7 +33,7 @@ _WHOLE_RE = re.compile(r"^\s*\{\{(.*?)\}\}\s*$", re.DOTALL)
 _DEFAULT_RE = re.compile(r"^(?P<path>.*?)\|\s*default\((?P<literal>.*)\)\s*$", re.DOTALL)
 _NAME_CHARS = re.compile(r"[A-Za-z0-9_\-$]")
 
-KNOWN_ROOTS = {"nodes", "trigger", "input", "item", "execution", "workflow"}
+KNOWN_ROOTS = {"nodes", "trigger", "input", "item", "loop", "execution", "workflow"}
 Segment = Union[str, int]
 
 
@@ -70,6 +72,26 @@ class ResolutionScope:
     execution: Dict[str, Any] = field(default_factory=dict)
     workflow: Dict[str, Any] = field(default_factory=dict)
     extra: Dict[str, Any] = field(default_factory=dict)
+
+
+def suggest_node_id(ref: str, candidates: Iterable[str]) -> Optional[str]:
+    """Closest existing node id to ``ref`` (for "Did you mean ...?" hints), or None."""
+    pool = sorted(set(candidates))
+    matches = difflib.get_close_matches(ref, pool, n=1, cutoff=0.6)
+    if matches:
+        return matches[0]
+    lowered = {c.lower(): c for c in pool}
+    return lowered.get(ref.lower())
+
+
+def unknown_node_suggestion(ref: str, candidates: Iterable[str]) -> str:
+    """User-facing suggestion text for a reference to a node id that does not exist."""
+    pool = sorted(set(candidates))
+    close = suggest_node_id(ref, pool)
+    if close:
+        return f"Did you mean '{close}'? Use {{{{nodes.{close}.output...}}}}."
+    listed = ", ".join(pool[:12]) + (" ..." if len(pool) > 12 else "")
+    return f"Node ids are case-sensitive. Existing nodes: {listed}." if pool else "This workflow has no nodes yet."
 
 
 def _syntax_error(raw: str, message: str, field_path: Optional[str]) -> NodeExecutionError:
@@ -226,10 +248,12 @@ def evaluate(expr: ParsedExpression, scope: ResolutionScope, field_path: Optiona
     if expr.root == "nodes":
         node_id = str(expr.segments[0])
         if node_id not in scope.all_node_ids:
+            candidates = scope.ancestors if scope.ancestors else scope.all_node_ids
             raise NodeExecutionError(
                 ErrorCategory.INVALID_MAPPING,
                 f"Expression {{{{{raw}}}}} references node '{node_id}', which does not exist in this workflow.",
                 field=field_path,
+                suggestion=unknown_node_suggestion(node_id, candidates),
                 details={"expression": raw, "node_id": node_id},
             )
         if scope.ancestors is not None and node_id not in scope.ancestors:
@@ -264,10 +288,18 @@ def evaluate(expr: ParsedExpression, scope: ResolutionScope, field_path: Optiona
         if "item" not in scope.extra:
             raise NodeExecutionError(
                 ErrorCategory.INVALID_MAPPING,
-                f"Expression {{{{{raw}}}}}: 'item' is only available inside Filter rules.",
+                f"Expression {{{{{raw}}}}}: 'item' is only available inside Filter rules and loop bodies.",
                 field=field_path, details={"expression": raw},
             )
         base, segments, prefix = scope.extra["item"], expr.segments, "item"
+    elif expr.root == "loop":
+        if "loop" not in scope.extra:
+            raise NodeExecutionError(
+                ErrorCategory.INVALID_MAPPING,
+                f"Expression {{{{{raw}}}}}: 'loop' is only available inside a Loop Over Items body.",
+                field=field_path, details={"expression": raw},
+            )
+        base, segments, prefix = scope.extra["loop"], expr.segments, "loop"
     elif expr.root == "execution":
         base, segments, prefix = scope.execution, expr.segments, "execution"
     else:  # workflow

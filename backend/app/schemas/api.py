@@ -51,6 +51,7 @@ class WorkflowSummary(BaseModel):
     description: str
     version: int
     has_webhook: bool
+    active: bool = True
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     last_execution_status: Optional[str] = None
@@ -65,6 +66,39 @@ class RunWorkflowRequest(BaseModel):
     input: Any = Field(default_factory=dict, description="Payload delivered to the trigger node.")
 
 
+class WorkflowActiveUpdate(BaseModel):
+    active: bool
+
+
+class FormInfo(BaseModel):
+    node_id: str
+    form_id: str
+    url: str
+    api_url: str
+    enabled: bool
+    workflow_active: bool
+
+
+class ScheduleInfo(BaseModel):
+    schedule_id: str
+    node_id: str
+    enabled: bool
+    workflow_active: bool
+    timezone: str
+    spec: Dict[str, Any]
+    next_run_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    last_execution_id: Optional[str] = None
+    last_status: Optional[str] = None
+    last_error: Optional[str] = None
+    upcoming: List[datetime] = Field(default_factory=list)
+
+
+class SchedulePreviewRequest(BaseModel):
+    config: Dict[str, Any]
+    count: int = Field(default=5, ge=1, le=20)
+
+
 class WebhookInfo(BaseModel):
     token: str
     url: str
@@ -77,12 +111,29 @@ class CredentialCreate(BaseModel):
     data: Dict[str, Any]
 
 
+class CredentialUpdate(BaseModel):
+    """Rename and/or replace secret fields; omitted or empty fields keep their stored value."""
+
+    name: Optional[str] = Field(default=None, max_length=255)
+    data: Optional[Dict[str, Any]] = None
+
+
 class CredentialOut(BaseModel):
     id: str
     type: str
     name: str
     hints: Dict[str, str] = Field(default_factory=dict)
+    provider: Optional[str] = None
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class CredentialTestResult(BaseModel):
+    ok: bool
+    message: str
+    provider: Optional[str] = None
+    category: Optional[str] = None
+    models_available: List[str] = Field(default_factory=list)
 
 
 class NodeExecutionOut(BaseModel):

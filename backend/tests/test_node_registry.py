@@ -1,9 +1,17 @@
-"""Unit tests for Phase 3 — Node Registry, node catalog discovery, and LLM prompt integration."""
+"""Node Registry: active library contents, lookups, prompt integration and API endpoints.
+
+Milestone 2 removed every design-only type from the active library (see
+docs/NODE_CATALOGUE.md). These tests pin that contract: the registry exposes
+only executable operations, and removed types are identifiable through
+``app.registry.legacy`` but never registered.
+"""
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.executors import get_executor
 from app.main import app
+from app.registry.legacy import LEGACY_NODE_TYPES
 from app.registry.node_registry import NodeRegistry, get_default_registry
 from app.schemas.registry import (
     NodeCategory,
@@ -21,6 +29,11 @@ from app.services.workflow_reviewer import (
     build_reviewer_system_prompt,
 )
 
+MILESTONE_1_OPERATIONS = {
+    "core.manual_trigger", "core.webhook_trigger", "core.set", "core.json_parse", "core.filter",
+    "core.if", "core.transform", "core.end", "http.request",
+}
+
 
 @pytest.fixture
 def client() -> TestClient:
@@ -33,107 +46,59 @@ def registry() -> NodeRegistry:
 
 
 # -------------------------------------------------------------------
-# 1. Registry Content & Coverage Tests
+# 1. Registry content
 # -------------------------------------------------------------------
 
-def test_registry_has_standard_nodes(registry: NodeRegistry):
-    """Verify registry is populated with standard nodes across all domains."""
-    all_nodes = registry.list_all()
-    assert len(all_nodes) >= 20, f"Expected at least 20 nodes, got {len(all_nodes)}"
-
-    # Check key node types exist
-    expected_types = [
-        "webhook_trigger",
-        "schedule_trigger",
-        "email_trigger",
-        "manual_trigger",
-        "email_output",
-        "notification_output",
-        "webhook_output",
-        "llm_agent",
-        "text_classifier",
-        "entity_extractor",
-        "summarizer",
-        "api_call",
-        "database_query",
-        "database_update",
-        "file_operation",
-        "tool_integration",
-        "condition",
-        "switch",
-        "loop",
-        "error_handler",
-        "data_transform",
-        "filter",
-        "code_execution",
-        "vector_search",
-        "knowledge_retrieval",
-        "human_approval",
-    ]
-    for ntype in expected_types:
-        node = registry.get(ntype)
-        assert node is not None, f"Expected standard node type '{ntype}' in registry"
-        assert node.node_type == ntype
-        assert len(node.label) > 0
-        assert len(node.description) > 0
+def test_active_library_contains_only_executable_operations(registry: NodeRegistry):
+    nodes = registry.list_all()
+    assert nodes, "registry must not be empty"
+    for node in nodes:
+        assert node.executable is True and node.status == "ready", node.operation_id
+        assert get_executor(node.operation_id) is not None, node.operation_id
+    assert MILESTONE_1_OPERATIONS <= {n.operation_id for n in nodes}
 
 
-def test_registry_covers_all_categories(registry: NodeRegistry):
-    """Verify registry covers all 7 node categories defined in roadmap."""
-    categories = registry.get_categories()
-    expected_categories = {
-        NodeCategory.INPUT_OUTPUT.value,
-        NodeCategory.AI_AGENT.value,
-        NodeCategory.TOOLS.value,
-        NodeCategory.LOGIC.value,
-        NodeCategory.DATA_PROCESSING.value,
-        NodeCategory.MEMORY_KNOWLEDGE.value,
-        NodeCategory.HUMAN_IN_THE_LOOP.value,
-    }
-    assert expected_categories.issubset(set(categories)), f"Missing categories: {expected_categories - set(categories)}"
+def test_removed_design_only_types_are_not_registered(registry: NodeRegistry):
+    assert len(LEGACY_NODE_TYPES) == 24
+    for legacy in LEGACY_NODE_TYPES:
+        definition = registry.get(legacy)
+        # A removed type may only resolve to a *different* executable operation through an explicit alias
+        # of an executable definition; it must never resolve to a design-only definition.
+        assert definition is None or definition.executable, legacy
+        assert registry.get_operation(legacy) is None, legacy
+
+
+def test_legacy_aliases_of_milestone_1_operations_still_resolve(registry: NodeRegistry):
+    """Older design types that were already superseded in Milestone 1 keep resolving (v1 upgrade path)."""
+    expected = {"manual_trigger": "core.manual_trigger", "webhook_trigger": "core.webhook_trigger",
+                "data_transform": "core.transform", "filter": "core.filter", "condition": "core.if",
+                "api_call": "http.request"}
+    for node_type, op in expected.items():
+        assert registry.get(node_type).operation_id == op
 
 
 def test_registry_filter_by_category(registry: NodeRegistry):
-    """Verify category filtering returns only matching node definitions."""
-    ai_nodes = registry.list_by_category(NodeCategory.AI_AGENT)
-    assert len(ai_nodes) >= 4
-    for n in ai_nodes:
-        assert n.category == NodeCategory.AI_AGENT
-
     logic_nodes = registry.list_by_category("logic")
-    assert len(logic_nodes) >= 4
+    assert {"core.if", "core.end"} <= {n.operation_id for n in logic_nodes}
     for n in logic_nodes:
         assert n.category == NodeCategory.LOGIC
+    for n in registry.list_by_category(NodeCategory.DATA_PROCESSING):
+        assert n.category == NodeCategory.DATA_PROCESSING
 
 
 def test_registry_lookup_case_insensitivity(registry: NodeRegistry):
-    """Verify registry lookup handles whitespace and mixed case gracefully."""
-    assert registry.get("LLM_AGENT") is not None
+    assert registry.get("CORE.SET") is not None
     assert registry.get("  webhook_trigger  ") is not None
     assert registry.get("Non_Existent_Node_Type") is None
 
 
-def test_registry_ports_and_tools_semantics(registry: NodeRegistry):
-    """Verify node definitions have typed input/output ports and tool metadata."""
-    cond_node = registry.get("condition")
-    assert cond_node is not None
-    assert len(cond_node.inputs) >= 1
-    assert len(cond_node.outputs) >= 2  # True/False branches
-
-    approval_node = registry.get("human_approval")
-    assert approval_node is not None
-    assert approval_node.category == NodeCategory.HUMAN_IN_THE_LOOP
-    assert len(approval_node.compatible_tools) >= 1
-    tool_names = [t.name for t in approval_node.compatible_tools]
-    assert "Slack" in tool_names or "Email" in tool_names
-
-    email_trigger = registry.get("email_trigger")
-    assert email_trigger is not None
-    assert len(email_trigger.outputs) >= 1
+def test_branching_ports(registry: NodeRegistry):
+    assert registry.get("condition").ports_out == ["true", "false"]
+    assert registry.get_operation("core.end").ports_out == []
 
 
 def test_custom_node_registration():
-    """Verify ability to dynamically register new node definitions."""
+    """The registry stays extensible: later milestones add definitions without engine changes."""
     custom_reg = NodeRegistry()
     custom_node = NodeDefinition(
         node_type="custom_voice_transcriber",
@@ -149,92 +114,87 @@ def test_custom_node_registration():
 
 
 # -------------------------------------------------------------------
-# 2. LLM Prompt Knowledge Injection Tests
+# 2. LLM prompt knowledge injection
 # -------------------------------------------------------------------
 
 def test_catalog_formatting_for_prompt(registry: NodeRegistry):
-    """Verify formatted catalog for LLM contains structured category blocks and types."""
     catalog_text = registry.get_catalog_for_prompt()
     assert "STANDARD NODE REGISTRY" in catalog_text
-    assert "webhook_trigger" in catalog_text
-    assert "llm_agent" in catalog_text
-    assert "human_approval" in catalog_text
-    assert "Compatible tools:" in catalog_text
     assert "REGISTRY USAGE RULES:" in catalog_text
+    for node in registry.list_all():
+        assert f"`{node.operation_id}`" in catalog_text
+        assert f"`{node.id_prefix}_1`" in catalog_text
+    # Removed types and design-only concepts are not advertised.
+    for legacy in ["llm_agent", "human_approval", "database_query", "code_execution", "vector_search"]:
+        assert f"`{legacy}`" not in catalog_text
+    assert "DESIGN-ONLY" not in catalog_text and "not_connected" not in catalog_text
 
 
 def test_architect_system_prompt_includes_registry():
-    """Verify WORKFLOW_ARCHITECT_SYSTEM_PROMPT includes live node catalog."""
     prompt = build_architect_system_prompt()
     assert "STANDARD NODE REGISTRY" in prompt
-    assert "webhook_trigger" in prompt
-    assert "llm_agent" in prompt
-    assert "database_query" in prompt
-    assert "Select matching node types from the standard Node Registry" in prompt
-    # Also verify global variable has it
+    assert "core.webhook_trigger" in prompt
+    assert "Never invent node types" in prompt
+    for legacy in ["llm_agent", "database_query", "email_trigger", "code_execution"]:
+        assert f"`{legacy}`" not in prompt
+    assert "not_connected" not in prompt
     assert "STANDARD NODE REGISTRY" in WORKFLOW_ARCHITECT_SYSTEM_PROMPT
 
 
 def test_reviewer_system_prompt_includes_registry():
-    """Verify REVIEWER_SYSTEM_PROMPT is enriched with node registry specifications."""
     prompt = build_reviewer_system_prompt()
     assert "STANDARD NODE REGISTRY" in prompt
     assert "Operation Correctness & Node Registry Alignment" in prompt
-    assert "REVIEWER_SYSTEM_PROMPT" != None
+    assert "DETERMINISTIC VALIDATION FACTS" in prompt
     assert "STANDARD NODE REGISTRY" in REVIEWER_SYSTEM_PROMPT
 
 
 # -------------------------------------------------------------------
-# 3. Node Registry API Endpoints Tests
+# 3. Node Registry API endpoints
 # -------------------------------------------------------------------
 
-def test_api_list_categories(client: TestClient):
-    """GET /api/registry/categories should return all distinct categories."""
+def test_api_list_categories(client: TestClient, registry: NodeRegistry):
     response = client.get("/api/registry/categories")
     assert response.status_code == 200
-    categories = response.json()
-    assert isinstance(categories, list)
-    assert len(categories) >= 7
-    assert "ai_agent" in categories
-    assert "tools" in categories
+    assert response.json() == registry.get_categories()
 
 
-def test_api_list_nodes_all(client: TestClient):
-    """GET /api/registry/nodes should return catalog with all registered nodes."""
+def test_api_list_nodes_all(client: TestClient, registry: NodeRegistry):
     response = client.get("/api/registry/nodes")
     assert response.status_code == 200
     data = response.json()
-    assert "total_nodes" in data
-    assert "categories" in data
-    assert "nodes" in data
-    assert data["total_nodes"] >= 20
+    assert data["total_nodes"] == len(registry.list_all())
     assert len(data["nodes"]) == data["total_nodes"]
+    assert all(n["executable"] for n in data["nodes"])
 
 
 def test_api_list_nodes_filtered_by_category(client: TestClient):
-    """GET /api/registry/nodes?category=logic should return only logic nodes."""
     response = client.get("/api/registry/nodes?category=logic")
     assert response.status_code == 200
     data = response.json()
-    assert data["total_nodes"] >= 4
+    assert data["total_nodes"] >= 2
     for node in data["nodes"]:
         assert node["category"] == "logic"
 
 
 def test_api_get_specific_node(client: TestClient):
-    """GET /api/registry/nodes/{node_type} should return specific node definition."""
-    response = client.get("/api/registry/nodes/llm_agent")
+    response = client.get("/api/registry/nodes/core.if")
     assert response.status_code == 200
     node = response.json()
-    assert node["node_type"] == "llm_agent"
-    assert node["category"] == "ai_agent"
-    assert len(node["inputs"]) >= 1
-    assert len(node["outputs"]) >= 1
+    assert node["operation_id"] == "core.if" and node["ports_out"] == ["true", "false"]
 
 
-def test_api_get_unknown_node_404(client: TestClient):
-    """GET /api/registry/nodes/{node_type} with unknown type should return 404."""
-    response = client.get("/api/registry/nodes/quantum_teleportation_node")
-    assert response.status_code == 404
-    detail = response.json().get("detail", "")
-    assert "not found" in detail.lower()
+def test_api_get_unknown_and_removed_node_404(client: TestClient):
+    for node_type in ["quantum_teleportation_node", "llm_agent"]:
+        response = client.get(f"/api/registry/nodes/{node_type}")
+        assert response.status_code == 404
+        assert "not found" in response.json().get("detail", "").lower()
+
+
+def test_api_legacy_catalogue(client: TestClient):
+    response = client.get("/api/registry/legacy")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 24
+    agent = next(item for item in data if item["node_type"] == "llm_agent")
+    assert "AI Agent" in agent["replacement"] and agent["reason"]

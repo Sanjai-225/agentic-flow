@@ -16,14 +16,35 @@ from pathlib import Path
 from typing import Any, Dict, Iterator
 
 _TMP_DIR = Path(tempfile.mkdtemp(prefix="agentic_flow_tests_"))
+
+# Provider keys from backend/.env are exposed ONLY as LIVE_* variables for opt-in live tests
+# (pytest -m live); the default suite never sees them and never calls a real provider.
+try:
+    from dotenv import dotenv_values
+
+    _dotenv = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
+except Exception:  # pragma: no cover - dotenv is a runtime dependency
+    _dotenv = {}
+for _name in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+    _value = (os.environ.get(_name) or _dotenv.get(_name) or "").strip()
+    if _value.lower().startswith("your_") or "placeholder" in _value.lower():
+        _value = ""  # template placeholder from .env: no real key, live tests for this provider are skipped
+    if _value and not os.environ.get(f"LIVE_{_name}"):
+        os.environ[f"LIVE_{_name}"] = _value
+
 os.environ.update(
     {
+        "OPENAI_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
         "GEMINI_API_KEY": "",
         "MOCK_DEV_MODE": "true",
         "APP_ENV": "test",
         "DATABASE_URL": f"sqlite+aiosqlite:///{(_TMP_DIR / 'test.db').as_posix()}",
         "JWT_SECRET": "test-jwt-secret-not-for-production",
         "HTTP_ALLOW_PRIVATE_NETWORKS": "true",
+        # The background schedule loop is off in the suite for determinism; scheduler tests drive the real
+        # Scheduler explicitly (ticks and a short-poll loop).
+        "SCHEDULER_ENABLED": "false",
         "PUBLIC_BASE_URL": "http://testserver",
     }
 )

@@ -38,7 +38,7 @@ from app.engine.contracts import (
 )
 from app.engine.expressions import ResolutionScope, resolve_value
 from app.engine.planner import ExecutionPlan, plan_workflow
-from app.engine.redaction import redact, redact_text
+from app.engine.redaction import redact, redact_text, scrub_secrets_in, storable
 from app.executors import get_executor
 from app.registry.node_registry import NodeRegistry, get_default_registry
 from app.schemas.registry import NodeDefinition
@@ -161,6 +161,8 @@ class WorkflowRunner:
 
         for nid in plan.order:
             node = nodes[nid]
+            if nid in plan.body_owner:
+                continue  # loop-body nodes run once per item inside _run_loop
             if cancel_event.is_set():
                 cancelled = True
                 break
@@ -170,6 +172,7 @@ class WorkflowRunner:
                                             f"{self._settings.EXECUTION_MAX_DURATION_SECONDS}s.").with_defaults()
                 break
 
+            inputs_by_port: Dict[str, List[Dict[str, Any]]] = {}
             if nid == plan.trigger_node_id:
                 upstream: Any = execution.input if execution.input is not None else {}
             else:
@@ -179,12 +182,20 @@ class WorkflowRunner:
                     await self._store.update_node(exec_id, nid, status=NodeStatus.SKIPPED.value,
                                                   node_metadata={"skip_reason": "No active incoming connection "
                                                                  "(branch not taken)."}, finished_at=utcnow())
+                    for body_id in plan.loop_bodies.get(nid, []):
+                        statuses[body_id] = NodeStatus.SKIPPED.value
+                        await self._store.update_node(exec_id, body_id, status=NodeStatus.SKIPPED.value,
+                                                      node_metadata={"skip_reason": "Its loop was skipped."},
+                                                      finished_at=utcnow())
                     continue
                 preds: List[str] = []
                 for e in active_in:
                     if e.source not in preds:
                         preds.append(e.source)
                 upstream = outputs[preds[0]] if len(preds) == 1 else {p: outputs[p] for p in preds}
+                for e in active_in:
+                    inputs_by_port.setdefault(e.target_port or "main", []).append(
+                        {"source": e.source, "edge": e.id, "output": outputs[e.source]})
 
             scope = ResolutionScope(
                 node_outputs=outputs, node_statuses=statuses, all_node_ids=set(nodes),
@@ -192,9 +203,14 @@ class WorkflowRunner:
                 upstream=upstream, **base_scope,
             )
             definition_ = plan.definitions[nid]
-            result = await self._run_node(execution, workflow, node, definition_, scope, cancel_event)
+            result = await self._run_node(execution, workflow, node, definition_, scope, cancel_event,
+                                          inputs_by_port=inputs_by_port)
             statuses[nid] = result.status.value
 
+            if result.status == NodeStatus.SUCCESS and nid in plan.loop_bodies:
+                result = await self._run_loop(execution, workflow, plan, node, result, outputs, statuses,
+                                              base_scope, cancel_event, deadline)
+                statuses[nid] = result.status.value
             if result.error is not None and result.error.category == ErrorCategory.CANCELLED:
                 cancelled = True
                 break
@@ -233,10 +249,161 @@ class WorkflowRunner:
             final = outputs[ran[-1]] if ran else None
         await self._finish(exec_id, WorkflowStatus.COMPLETED, output=final)
 
+    # ----------------------------------------------------------------- loop
+    async def _run_loop(self, execution: Execution, workflow: WorkflowSchema, plan: ExecutionPlan,
+                        loop_node: NodeSchema, loop_result: NodeExecutionResult, outputs: Dict[str, Any],
+                        statuses: Dict[str, str], base_scope: Dict[str, Any], cancel_event: asyncio.Event,
+                        deadline: float) -> NodeExecutionResult:
+        """Run the loop body once per item; return the loop node's final result (routes to 'done').
+
+        Each iteration gets its own copy of the node outputs, so body nodes see the current item's data
+        ({{item}}, {{loop.index}}, {{nodes.<body_id>.output}}) and nothing leaks between iterations. Body
+        nodes run through ``_run_node`` (retries, timeouts, redaction, persistence); their rows keep the last
+        iteration plus a capped per-iteration summary in ``metadata.iterations``.
+        """
+        exec_id = execution.id
+        loop_id = loop_node.id
+        body = plan.loop_bodies[loop_id]
+        body_set = set(body)
+        nodes = {n.id: n for n in workflow.nodes}
+        items = list((loop_result.output or {}).get("items") or [])
+        config = loop_node.config if isinstance(loop_node.config, dict) else {}
+        stop_on_error = config.get("on_item_error", "stop") != "continue"
+        try:
+            loop_timeout = float(config.get("timeout_seconds", 300))
+        except (TypeError, ValueError):
+            loop_timeout = 300.0
+        loop_deadline = min(deadline, time.monotonic() + loop_timeout)
+        terminals = [nid for nid in body if not any(e.target in body_set for e in plan.outgoing.get(nid, []))]
+        results: List[Any] = []
+        errors: List[Dict[str, Any]] = []
+        history: Dict[str, List[Dict[str, Any]]] = {nid: [] for nid in body}
+        last_status: Dict[str, str] = {nid: NodeStatus.SKIPPED.value for nid in body}
+        failure: Optional[NodeError] = None
+        count = len(items)
+        await self._store.add_logs(exec_id, [LogEntry("info", f"Loop '{loop_node.label}' starting {count} "
+                                                      f"iteration(s)", node_id=loop_id)])
+
+        for index, item in enumerate(items):
+            if cancel_event.is_set():
+                failure = NodeError(category=ErrorCategory.CANCELLED, message="Execution was cancelled.")
+                break
+            if time.monotonic() > loop_deadline:
+                failure = NodeError(category=ErrorCategory.TIMEOUT, node_id=loop_id, field="timeout_seconds",
+                                    message=f"The loop did not finish within its time limit "
+                                            f"({len(results)} of {count} items done).").with_defaults()
+                break
+            iter_outputs: Dict[str, Any] = dict(outputs)
+            iter_statuses: Dict[str, str] = dict(statuses)
+            active: Set[str] = {e.id for e in plan.outgoing.get(loop_id, []) if e.source_port == "item"}
+            loop_ctx = {"item": item, "loop": {"index": index, "count": count, "item": item,
+                                               "is_first": index == 0, "is_last": index == count - 1}}
+            item_error: Optional[Dict[str, Any]] = None
+            for nid in body:
+                node = nodes[nid]
+                active_in = [e for e in plan.incoming.get(nid, []) if e.id in active]
+                if not active_in:
+                    iter_statuses[nid] = NodeStatus.SKIPPED.value
+                    history[nid].append({"index": index, "status": "skipped"})
+                    continue
+                preds: List[str] = []
+                inputs_by_port: Dict[str, List[Dict[str, Any]]] = {}
+                for e in active_in:
+                    value = item if e.source == loop_id else iter_outputs[e.source]
+                    if e.source not in preds:
+                        preds.append(e.source)
+                    inputs_by_port.setdefault(e.target_port or "main", []).append(
+                        {"source": e.source, "edge": e.id, "output": value})
+                pred_values = {p: (item if p == loop_id else iter_outputs[p]) for p in preds}
+                upstream = pred_values[preds[0]] if len(preds) == 1 else pred_values
+                scope = ResolutionScope(
+                    node_outputs=iter_outputs, node_statuses=iter_statuses, all_node_ids=set(nodes),
+                    ancestors=plan.ancestors.get(nid, set()), trigger_node_id=plan.trigger_node_id,
+                    upstream=upstream, extra=loop_ctx, **base_scope,
+                )
+                result = await self._run_node(execution, workflow, node, plan.definitions[nid], scope, cancel_event,
+                                              inputs_by_port=inputs_by_port)
+                iter_statuses[nid] = result.status.value
+                last_status[nid] = result.status.value
+                entry: Dict[str, Any] = {"index": index, "status": result.status.value}
+                if result.error is not None and result.error.category == ErrorCategory.CANCELLED:
+                    failure = result.error
+                    history[nid].append(entry)
+                    break
+                if result.status == NodeStatus.SUCCESS:
+                    iter_outputs[nid] = result.output
+                    entry["output_preview"] = storable(result.output)
+                    ports = result.route if result.route is not None else ["main"]
+                elif node.on_error == "continue":
+                    iter_outputs[nid] = {"error": result.error.model_dump(mode="json") if result.error else None}
+                    ports = ["main"]
+                else:
+                    entry["error"] = result.error.message if result.error else "failed"
+                    history[nid].append(entry)
+                    item_error = {"index": index, "node_id": nid,
+                                  "category": result.error.category.value if result.error else None,
+                                  "message": result.error.message if result.error else "Node failed."}
+                    break
+                history[nid].append(entry)
+                for edge in plan.outgoing.get(nid, []):
+                    if edge.source_port in ports:
+                        active.add(edge.id)
+            if failure is not None:
+                break
+            if item_error is not None:
+                errors.append(item_error)
+                results.append(None)
+                if stop_on_error:
+                    failure = NodeError(
+                        category=ErrorCategory.NODE_EXECUTION, node_id=loop_id,
+                        message=f"Item {index} failed at node '{item_error['node_id']}': {item_error['message']}",
+                        suggestion="Fix the failing item, or set 'When an item fails' to 'continue'.",
+                        details={"errors": errors}).with_defaults()
+                    break
+                continue
+            ran = [t for t in terminals if t in iter_outputs and iter_statuses.get(t) == NodeStatus.SUCCESS.value]
+            results.append(iter_outputs[ran[0]] if len(ran) == 1 else {t: iter_outputs[t] for t in ran} or None)
+
+        # Persist a per-node summary of every iteration (capped) and the overall body node status.
+        for nid in body:
+            ran = [h for h in history[nid] if h["status"] != "skipped"]
+            if not ran:
+                status = NodeStatus.SKIPPED.value
+            elif any(h["status"] == NodeStatus.FAILED.value for h in ran):
+                status = NodeStatus.FAILED.value
+            else:
+                status = last_status[nid]
+            statuses[nid] = status
+            meta = {"loop_id": loop_id, "iteration_count": len(ran), "iterations": history[nid][:100],
+                    "iterations_truncated": len(history[nid]) > 100}
+            if not ran:
+                meta["skip_reason"] = "The loop had no items." if not items else "Not reached in any iteration."
+            await self._store.update_node(exec_id, nid, status=status, node_metadata=meta, finished_at=utcnow())
+
+        failed_indexes = {e["index"] for e in errors}
+        succeeded = sum(1 for i in range(len(results)) if i not in failed_indexes)
+        final = {"results": results, "count": count, "succeeded": succeeded, "failed": len(errors),
+                 "errors": errors, "items": items}
+        status = NodeStatus.FAILED if failure is not None else NodeStatus.SUCCESS
+        await self._store.update_node(exec_id, loop_id, status=status.value,
+                                      output=final if failure is None else None,
+                                      error=failure.model_dump(mode="json") if failure else None,
+                                      node_metadata={"loop": True, "count": count, "succeeded": succeeded,
+                                                     "failed": len(errors)},
+                                      route=["done"] if failure is None else None, finished_at=utcnow())
+        await self._store.add_logs(exec_id, [LogEntry(
+            "info" if failure is None else "error",
+            f"Loop '{loop_node.label}' finished: {succeeded} succeeded, {len(errors)} failed of {count}",
+            node_id=loop_id)])
+        if failure is not None:
+            return NodeExecutionResult(status=NodeStatus.FAILED, error=failure)
+        return NodeExecutionResult(output=final, route=["done"], metadata={"loop": True})
+
     # ----------------------------------------------------------------- node
     async def _run_node(self, execution: Execution, workflow: WorkflowSchema, node: NodeSchema,
                         definition: NodeDefinition, scope: ResolutionScope,
-                        cancel_event: asyncio.Event) -> NodeExecutionResult:
+                        cancel_event: asyncio.Event,
+                        inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> NodeExecutionResult:
         exec_id = execution.id
         executor = get_executor(definition.operation_id)
         assert executor is not None  # guaranteed by the planner
@@ -258,6 +425,10 @@ class WorkflowRunner:
                                           started_at=started_at)
             recorded_inputs: Dict[str, Any] = {"upstream": scope.upstream}
             side_effects = definition.side_effects
+            node_secrets: set[str] = set()
+
+            async def usage_sink(record: Dict[str, Any], _node_id: str = node.id) -> None:
+                await self._store.add_ai_usage(exec_id, execution.user_id, execution.workflow_id, _node_id, record)
             try:
                 resolved_config = resolve_value(node.config, scope, "", skip_keys=lazy)
                 resolved_inputs = resolve_value(node.inputs, scope, "inputs")
@@ -273,7 +444,8 @@ class WorkflowRunner:
                     user_id=execution.user_id, correlation_id=execution.correlation_id, upstream=scope.upstream,
                     state=dict(scope.node_outputs), credentials=DbCredentialAccessor(self._sm, execution.user_id),
                     logger=node_logger, cancel_event=cancel_event, timeout_seconds=timeout, attempt=attempt,
-                    resolve=resolver, settings=self._settings,
+                    resolve=resolver, settings=self._settings, usage_sink=usage_sink, secrets=node_secrets,
+                    inputs_by_port=inputs_by_port or {},
                 )
                 result = await self._invoke(executor, config, resolved_inputs, ctx, timeout, cancel_event)
             except NodeExecutionError as exc:
@@ -293,6 +465,19 @@ class WorkflowRunner:
                     technical_detail=redact_text(str(exc)[:500])).with_defaults())
 
             duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+            if node_secrets:
+                # Never persist secrets resolved during this node (e.g. provider API keys) - even if a provider
+                # echoed them back in an error, a tool result or a model response.
+                result.output = scrub_secrets_in(result.output, node_secrets)
+                result.metadata = scrub_secrets_in(result.metadata, node_secrets)
+                if result.error is not None:
+                    result.error = result.error.model_copy(update={
+                        "message": scrub_secrets_in(result.error.message, node_secrets),
+                        "technical_detail": scrub_secrets_in(result.error.technical_detail, node_secrets),
+                        "details": scrub_secrets_in(result.error.details, node_secrets)})
+                for entry in node_logger.entries:
+                    entry.message = scrub_secrets_in(entry.message, node_secrets)
+                    entry.data = scrub_secrets_in(entry.data, node_secrets)
             if result.error is not None:
                 result.status = NodeStatus.FAILED
                 result.error.node_id = node.id

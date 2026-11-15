@@ -3,10 +3,11 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 
-import { CATEGORY_COLOR, NODE_STATUS_STYLE, formatDuration } from '@/lib/status';
+import { PORT_COLOR, portsFor } from '@/lib/ports';
+import { NODE_STATUS_STYLE, categoryColor, formatDuration } from '@/lib/status';
 import type { FlowNode } from '@/lib/workflowMapping';
 import { useEditorStore } from '@/store/editorStore';
-import type { NodeDefinition, NodeExecution, ValidationIssue, WorkflowNode } from '@/types/workflow';
+import type { LegacyNodeType, NodeDefinition, NodeExecution, ValidationIssue, WorkflowNode } from '@/types/workflow';
 
 export interface WorkflowNodeViewProps {
   node: WorkflowNode;
@@ -14,12 +15,20 @@ export interface WorkflowNodeViewProps {
   run?: Pick<NodeExecution, 'status' | 'duration_ms' | 'error' | 'attempts'> | null;
   issues?: ValidationIssue[];
   selected?: boolean;
+  /** Set when the node uses a type removed from the library (preserved, never executable). */
+  legacy?: LegacyNodeType;
+}
+
+/** The removed node type a canonical node refers to (operation, `unsupported:` prefix or type). */
+export function legacyTypeOf(node: Pick<WorkflowNode, 'operation' | 'type'>, legacyTypes: Record<string, LegacyNodeType>): LegacyNodeType | undefined {
+  const op = (node.operation || '').replace(/^unsupported:/, '');
+  return legacyTypes[op] || (node.type ? legacyTypes[node.type] : undefined);
 }
 
 /** Pure presentational node card (unit-tested without React Flow state). */
-export function WorkflowNodeView({ node, definition, run, issues = [], selected }: WorkflowNodeViewProps) {
+export function WorkflowNodeView({ node, definition, run, issues = [], selected, legacy }: WorkflowNodeViewProps) {
   const executable = Boolean(definition?.executable);
-  const accent = definition ? CATEGORY_COLOR[definition.category] || '#94a3b8' : '#94a3b8';
+  const accent = definition ? categoryColor(definition.category) : '#94a3b8';
   const status = run?.status;
   const statusStyle = status ? NODE_STATUS_STYLE[status] : null;
   const errorIssues = issues.filter((i) => i.severity === 'error');
@@ -37,7 +46,7 @@ export function WorkflowNodeView({ node, definition, run, issues = [], selected 
       <div className="px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
           <span className="chip" style={{ color: accent, background: 'rgba(255,255,255,0.05)' }}>
-            {definition?.label || node.type || 'Unknown'}
+            {definition?.label || legacy?.label || node.type || 'Unknown'}
           </span>
           {statusStyle && (
             <span className="chip" style={{ color: statusStyle.color, background: 'rgba(255,255,255,0.05)' }} data-testid="node-status">
@@ -53,7 +62,11 @@ export function WorkflowNodeView({ node, definition, run, issues = [], selected 
 
         {!executable && (
           <p className="mt-1.5 rounded-md px-1.5 py-1 text-[10px] font-medium text-[var(--warning)]" style={{ background: 'rgba(251,191,36,0.1)' }}>
-            {definition ? 'Design-only — cannot execute yet' : `Not executable (${node.operation || node.type})`}
+            {legacy
+              ? 'Unsupported legacy node — replace it manually'
+              : definition
+                ? 'Not executable'
+                : `Unknown operation (${node.operation || node.type}) — cannot execute`}
           </p>
         )}
         {run?.error && (
@@ -82,24 +95,34 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<FlowNode>) {
   const definition = useEditorStore((s) => (node.operation ? s.registryByOp[node.operation] : undefined));
   const run = useEditorStore((s) => s.execution?.nodes.find((n) => n.node_id === id) ?? null);
   const issues = useEditorStore((s) => s.validation?.issues.filter((i) => i.node_id === id));
+  const legacy = useEditorStore((s) => (definition ? undefined : legacyTypeOf(node, s.legacyTypes)));
 
-  const portsIn = definition ? definition.ports_in : ['main'];
-  const portsOut = definition ? definition.ports_out : ['main'];
+  const { in: portsIn, out: portsOut } = portsFor(definition, node.config);
 
   return (
     <div className="relative">
-      {portsIn.map((port) => (
-        <Handle key={`in-${port}`} type="target" position={Position.Left} id={port} />
-      ))}
-      <WorkflowNodeView node={node} definition={definition} run={run} issues={issues} selected={selected} />
+      {portsIn.map((port, idx) => {
+        const top = `${((idx + 1) / (portsIn.length + 1)) * 100}%`;
+        return (
+          <div key={`in-${port}`}>
+            <Handle type="target" position={Position.Left} id={port} style={{ top }} />
+            {portsIn.length > 1 && (
+              <span className="pointer-events-none absolute -left-12 text-[9px] font-semibold uppercase text-[var(--text-muted)]" style={{ top: `calc(${top} - 7px)` }}>
+                {port.replace('input_', 'in ')}
+              </span>
+            )}
+          </div>
+        );
+      })}
+      <WorkflowNodeView node={node} definition={definition} run={run} issues={issues} selected={selected} legacy={legacy} />
       {portsOut.map((port, idx) => {
         const top = `${((idx + 1) / (portsOut.length + 1)) * 100}%`;
-        const color = port === 'true' ? 'var(--success)' : port === 'false' ? 'var(--danger)' : undefined;
+        const color = PORT_COLOR[port];
         return (
           <div key={`out-${port}`}>
             <Handle type="source" position={Position.Right} id={port} style={{ top, background: color }} />
             {port !== 'main' && (
-              <span className="pointer-events-none absolute -right-9 text-[9px] font-semibold uppercase" style={{ top: `calc(${top} - 7px)`, color }}>
+              <span className="pointer-events-none absolute left-full ml-2 whitespace-nowrap text-[9px] font-semibold uppercase" style={{ top: `calc(${top} - 7px)`, color }}>
                 {port}
               </span>
             )}

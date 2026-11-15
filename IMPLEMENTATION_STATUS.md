@@ -1,6 +1,190 @@
 # Implementation Status
 
-_Last updated: 2026-11-15 — Milestone 1 complete and validated. Milestones 2–4 are not authorized._
+_Last updated: 2026-11-15 — Milestone 1 complete. **Milestone 2 implemented, validated and committed on `testing`**. One item is still open: live OpenAI and Anthropic *inference*, blocked because both provider accounts have no credit (not a code issue). Milestones 3–4 not authorized._
+
+## Milestone 2 — AI Agent, providers, AI Generate, triggers, flow nodes: VALIDATED (one external item open)
+
+All phases (0–7) are implemented, every workflow A–I passes end to end on a real running stack, and cross-provider fallback is verified **live**.
+
+**Open item:** OpenAI and Anthropic inference. With the configured keys:
+- **Accepted:** live connection tests list all catalogue models (`gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna`; `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`).
+- **Blocked:** every generation request is refused for billing. OpenAI returns 429 "You have no credits remaining", and Anthropic returns 400 "Your credit balance is too low". The raw provider SDKs fail the same way.
+
+**To close it:** add credit to both accounts, then run `python scripts/compare_ai_models.py --providers openai anthropic` and `python -m pytest -m live tests/test_ai_live.py -s`.
+
+### What was built (per phase)
+
+| Phase | Result | Status |
+|---|---|---|
+| 0 Stabilization | Milestone 1 fix list (a)–(f): predictable ids with "did you mean" suggestions, output fields before the first run, no Set placeholders, readable conversion errors, classified Gemini errors, typed JSON editors | Implemented and tested |
+| 1 Cleanup | 24 design-only types removed from the registry; legacy map (`registry/legacy.py`); legacy workflows preserved and never remapped; designer and reviewer prompts generated only from executable operations; reviewer gets deterministic planner facts and can never pass an invalid plan; mock designer emits only executable workflows; design-only toggle removed | Implemented and tested |
+| 2 Providers | `app/ai/`: verified catalogue, LangChain adapters (ChatOpenAI on the Responses API, ChatAnthropic, ChatGoogleGenerativeAI), router with bounded retries and eligible-only fallback, error normalisation, usage records, provider credentials (encrypted, masked, editable, real connection test), platform keys opt-in in production | Implemented. Gemini live-tested; OpenAI and Anthropic **not live-tested** |
+| 3 Agent | `ai.agent`: LangGraph `StateGraph` with a guarded tool loop; secure tool registry with 6 real tools; allowlist and policy enforcement; structured output with jsonschema validation and bounded repair; all limits; traces with no chain-of-thought | Implemented and tested; live on Gemini |
+| 4 AI Generate | `ai.generate`: text or schema-validated typed JSON; no tools, no fallback | Implemented and tested; live on Gemini |
+| 5 Triggers | Form Submission Trigger (public page, validation, honeypot, rate limit, size cap, rotation) and Schedule Trigger (DB-driven scheduler, DST-aware, misfire policy, unique-claim duplicate protection); workflow active flag | Implemented and tested; live in E2E |
+| 6 Flow nodes | Switch (dynamic case ports), Merge (sequential synchronisation), Loop Over Items (real per-item body execution), Date & Time, Array | Implemented and tested; live in E2E |
+| 7 | End-to-end verification, docs, `.env.example`, pinned requirements | Done (see the results below) |
+
+- **Active library:** 9 → 18 executable operations; all 24 design-only types removed. Detail: `docs/NODE_CATALOGUE.md`.
+- **New operation ids:** `ai.generate`, `ai.agent`, `core.form_trigger`, `core.schedule_trigger`, `core.switch`, `core.merge`, `core.loop`, `core.datetime`, `core.array`.
+- **Migration:** `0002` adds `workflows.active`, `credentials.updated_at`, `ai_usage_records`, `workflow_forms`, `workflow_schedules` and `schedule_occurrences`. It is auto-applied on startup.
+- **Docs:** `docs/NODE_CATALOGUE.md`, `docs/AI_PROVIDERS_AND_AGENT.md`, `docs/TRIGGERS.md`, and an updated `docs/MASTER_IMPLEMENTATION_PLAN.md`.
+
+### Verified provider models (2026-11-15)
+
+| Provider | Models | Evidence |
+|---|---|---|
+| Gemini | `gemini-3.5-flash` (default), `gemini-3.5-flash-lite`, `gemini-3.8-flash` | Live `models.list` plus real calls. Tool calling succeeded on 3.5-flash and 3.5-flash-lite. 3.8-flash succeeded for structured generation but returned 504/503 "high demand" on tool calls during verification. |
+| OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna` | Official model docs only; **not live-tested** |
+| Anthropic | `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5` | Anthropic models reference only; **not live-tested** |
+
+`gemini-2.5-pro` and `gemini-2.5-flash` were removed: `models.list` still lists them, but generation returns 404 "no longer available to new users".
+
+### Final verification results (2026-11-15)
+
+**Backend**
+- `python -m pytest -q`: **387 passed, 11 skipped**. The 11 skips are `live`-marked tests, not selected by default. Inference in the default suite is mocked (`tests/fake_llm.py`).
+- `python -m pytest -m live tests/test_ai_live.py tests/test_generated_workflow.py tests/test_http_node.py`: **5 passed, 6 skipped**.
+  - Passed live: Gemini AI Generate (structured), Gemini Agent with real `data_aggregate` + `calculator` calls, Gemini connection test, Gemini AI designer, HTTP node against httpbin.org.
+  - Skipped: the OpenAI ×3 and Anthropic ×3 live tests (no keys).
+- `python -m ruff check app tests alembic/env.py`: clean.
+- `ruff format --check`: 79 files would be reformatted. No formatter is configured or enforced in this repo, so nothing was reformatted.
+
+**Frontend**
+- `npm test`: **59 passed** (6 files).
+- `npm run typecheck`: OK.
+- `npm run lint`: OK, with the 1 pre-existing font warning only.
+- `npm run build`: OK, including the new `/forms/[formId]` route.
+
+**Migrations**
+- Fresh DB: upgrade → downgrade to 0001 → upgrade OK.
+- A **copy** of the real dev DB upgraded 0001 → 0002. Its 2 workflows, 8 versions and 4 executions are preserved and all workflows are active.
+- On that copy, the old AI-designer workflow keeps its legacy operations (`llm_agent`, `database_query`, …) and each is reported as a removed type. The Milestone 1 workflow is still valid.
+
+**End-to-end**
+- **Setup:** real uvicorn backend (dev-DB copy, SSRF protection on, scheduler on) plus a production Next.js server. Real httpbin.org, live Gemini, and the real public form URL through the frontend proxy. Scripts are kept outside the repo.
+
+| Workflow | Result |
+|---|---|
+| A deterministic regression | PASS: both branches, real HTTP, typed output |
+| B AI Generate | PASS: LIVE Gemini, typed JSON, usage recorded, history |
+| C Agent task 1 | PASS: LIVE structured classification |
+| D Agent task 2 | PASS: LIVE `data_aggregate` executed, validated args, structured result. The re-run also exercised a LIVE fallback (primary 429 quota → fallback) |
+| E Agent, multiple tools | PASS: LIVE `data_aggregate` → `calculator` → `datetime`, 4 iterations, bounded |
+| F Form | PASS: public page served, invalid → 422 and no run, valid → run on the correct branch (high/low) |
+| G Schedule | PASS: the real scheduler fired at the configured minute, LIVE AI Generate, state persisted, next run advanced, one execution per occurrence; the schedule survived a backend restart |
+| H Switch + Merge | PASS on the re-run, after fixing a defect found by the first run (below) |
+| I Loop | PASS: the body ran once per item, results collected |
+| Security | PASS: workflow, execution, form and credential isolation; SSRF blocked on the live server; API key masked, never in execution records or server logs; another user cannot use the credential |
+
+**Defects found by live verification and fixed (with regression tests)**
+1. **Switch:** all cases were resolved before evaluation, so a later case's missing field failed the node even after an earlier case matched. Cases are now resolved lazily per case.
+2. **Provider error classification:** a connection reset surfaced as aiohttp `TransferEncodingError(code=400)` and was treated as a non-retryable HTTP 400. Transport errors are now classified first, as retryable and fallback-eligible.
+3. **`data_aggregate`:** Gemini sent records as JSON strings because list items were untyped. Items are now explicitly typed, and JSON-encoded records are decoded strictly.
+4. **Model catalogue:** removed `gemini-2.5-*` (404) and made `gemini-3.5-flash` the default.
+5. **Frontend schedule preview:** it crashed while an invalid time zone was being typed. Formatting is now safe.
+
+The second full E2E run hit the Gemini **free-tier daily quota** (429 `RESOURCE_EXHAUSTED`) on `gemini-3.5-flash`. The router classified it correctly, retried within bounds and reported it. The affected checks were re-run with `gemini-3.5-flash-lite` and passed 6/6.
+
+### Final validation with configured provider keys (2026-11-15)
+- **Backend:** `python -m pytest -q` gives **391 passed, 13 skipped** (the opt-in live tests). Ruff is clean.
+- **Frontend:** 59 tests passed, typecheck OK, lint shows only the pre-existing font warning, production build OK.
+- **Live:** `python -m pytest -m live tests/test_ai_live.py tests/test_generated_workflow.py tests/test_http_node.py` gives **9 passed, 4 failed**.
+
+  | Live check | Result |
+  |---|---|
+  | Gemini (`gemini-3.5-flash-lite`) AI Generate | PASS (structured) |
+  | Gemini Agent with real `data_aggregate` + `calculator` calls | PASS |
+  | Connection tests: OpenAI, Anthropic, Gemini | PASS (all keys accepted; models listed) |
+  | Cross-provider fallback OpenAI → Gemini | PASS (OpenAI billing failure; reason recorded) |
+  | Cross-provider fallback Anthropic → Gemini | PASS (Anthropic billing failure; reason recorded) |
+  | AI designer | PASS |
+  | HTTP node against httpbin.org | PASS |
+  | AI Generate + Agent on OpenAI `gpt-6.1-sol` | FAIL: billing only ("no remaining credit or quota") |
+  | AI Generate + Agent on Anthropic `claude-sonnet-5-5` | FAIL: billing only ("no remaining credit or quota") |
+
+- **End to end:** the A–I suite on a fresh migrated copy of the dev database gives **29/29 PASS**. Workflow C ran with an OpenAI primary and a Gemini fallback, and switched live with the reason recorded.
+- **Model comparison:** `scripts/compare_ai_models.py` found `gemini-3.5-flash-lite` passing all checks. `gemini-3.5-flash` hit the free-tier daily quota. `gemini-3.8-flash` returned 503 "high demand" for structured output, and its tool calls took about 104 s. OpenAI and Anthropic could not be compared because of billing.
+- **Fixed during this validation:** billing errors (OpenAI 429 "no credits", Anthropic 400 "credit balance too low", Gemini quota) were reported as "bad request" or retried pointlessly. They now get a clear message, are not retried, and are fallback-eligible. Covered by regression tests.
+- **`.env` placeholders:** values such as `your_openai_api_key_here` are treated as "no key" everywhere.
+
+### Known limitations / not done
+- **OpenAI and Anthropic:** not live-tested, so cross-provider live fallback is unverified. Needs `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`.
+- **`gemini-3.8-flash`:** intermittently 503/504 under provider load. Configure a fallback model.
+- **Single process:** rate limiting and cancellation work per process (in-memory). Schedule duplicate protection is database-enforced and safe across workers.
+- **DNS rebinding:** SSRF checks run at resolution time, so rebinding between the check and the connection is not fully mitigated (unchanged from Milestone 1).
+- **Branches are sequential:** Merge is sequential synchronisation, not parallel execution.
+- **Loops:** nested loops are not supported. Body node history keeps the last iteration plus the first 100 iteration summaries.
+- **No cost figures:** pricing data is unverified, so no cost estimates are produced; token usage is provider-reported only.
+- **Agent checkpointing:** none on disk. The state is serialisable, but durable pause/resume, human approval, wait and restart recovery remain Milestone 4.
+- **Composio** and application integrations are Milestone 3.
+- **UI not clicked through in a browser:** components are covered by vitest and a production build. Public form pages were served and submitted against the running servers.
+
+### Manual configuration still needed
+1. Replace the placeholders `OPENAI_API_KEY=your_openai_api_key_here` and `ANTHROPIC_API_KEY=your_anthropic_api_key_here` in `backend/.env` (placeholders are treated as no key). Then run `python scripts/compare_ai_models.py --providers openai anthropic` to pick a primary and fallback model per provider, and `python -m pytest -m live tests/test_ai_live.py -s`.
+2. Production: set `APP_ENV=production`, `JWT_SECRET`, `CREDENTIALS_ENCRYPTION_KEY` and `PUBLIC_APP_URL`/`PUBLIC_BASE_URL`. Set `AI_ALLOW_PLATFORM_KEYS=true` only if platform keys should be shared.
+3. Run `pip install -r backend/requirements.txt` for the new pinned LangChain, LangGraph, croniter and tzdata packages.
+
+### Phase 0 details
+
+### Phase 0 baseline (before any change, 2026-11-15)
+- **Git:** branch `testing`, HEAD `ae9d0fc`, working tree clean.
+- **Backend:** `python -m pytest -q` gave **163 passed, 2 skipped** (`live`). `ruff check` was clean.
+- **Frontend:** `npm test` gave **26 passed** (the Milestone 1 notes said 25; the actual count was 26). `typecheck` OK. `lint` OK, with 1 pre-existing warning (Google Fonts `<link>` in `layout.tsx`).
+- **Registry:** **33 types: 9 executable, 24 design-only, 0 partial.** The exact list is in `docs/NODE_CATALOGUE.md`.
+
+### Phase 0 stabilization: Milestone 1 fix list (all six were still present; all now fixed)
+
+| # | Item | Fix | Status |
+|---|------|-----|--------|
+| a | Predictable node ids and suggestions for invalid ids | Each registry definition has an `id_prefix`. The editor's `uniqueNodeId` returns the smallest free `<prefix>_<n>` (`set_1`, `http_1`). Previously it started at `nodes+1`, giving ids like `set_4`. The designer prompt uses the same convention. The planner and the runtime resolver add "Did you mean 'set_1'?" using `difflib`, or list the upstream nodes. | Implemented and tested |
+| b | Data fields before the first run | New `infer_output` hook on `NodeDefinition` (`registry/output_hooks.py`), aggregated by `engine/output_fields.py`. Fields come from config for Set, Transform, Manual Trigger and End, from the schema for HTTP, Webhook and Filter, and are inherited for If and an End without output. Exposed as `POST /api/workflows/output-fields`. The data picker shows them as "expected" until a real run exists. Cycles and unknown or legacy operations are handled safely. | Implemented and tested |
+| c | Set placeholder field and empty values | `core.set` now defaults to `fields: []`. `SetField` rejects blank names, `a..b` names, and empty values unless `type: string`. Planner messages from our validators are kept verbatim and readable. | Implemented and tested |
+| d | Number-conversion errors | `coerce` produces messages like "Field 'amount' expects a number such as 42 or 3.5 …, but the value is the text 'twelve'", with a suggestion and details. Raw Python text is gone. NaN and Infinity are rejected. | Implemented and tested |
+| e | Friendly Gemini errors | New `services/llm_errors.py` classifies errors as missing or invalid key, permission, quota, timeout, network, model not found, bad request, unavailable, empty or unknown. The REST path keeps Google's error body; API keys are scrubbed from all messages. A bad key or a network failure stops trying further models, and the SDK is skipped when it cannot help. `/api/workflows/generate` returns `{category, message, suggestion}`, and the UI shows the message plus the suggestion. | Implemented and tested; also checked live against Gemini (invalid key → `invalid_api_key`, no key leaked; real key → success) |
+| f | Typed JSON editors | Backend typing was already correct, and is now covered by a regression test. New widgets: `json_template` (End output, HTTP body) and `keyvalue_json` (Transform mappings). They accept JSON with unquoted `{{refs}}` and store whole-reference strings, so numbers, objects and arrays keep their type. Invalid objects are reported, never saved as strings. | Implemented and tested |
+
+### Phase 0 files
+- **Backend, new:**
+  - `app/registry/output_hooks.py`
+  - `app/engine/output_fields.py`
+  - `app/services/llm_errors.py`
+  - `tests/test_output_fields.py` (15 tests)
+  - `tests/test_m1_stabilization.py` (50 tests)
+- **Backend, modified:**
+  - `app/schemas/registry.py`: widgets, `id_prefix`, `infer_output`
+  - `app/registry/executable_nodes.py`: hooks, prefixes, Set default, widgets
+  - `app/registry/configs.py`: SetField validation
+  - `app/registry/node_registry.py`: id prefixes in the designer catalogue
+  - `app/engine/planner.py`: readable validator messages and id suggestions
+  - `app/engine/expressions.py`: id suggestions
+  - `app/executors/core.py`: conversion errors
+  - `app/services/llm_service.py`: error classification and early stop
+  - `app/services/workflow_reviewer.py`
+  - `app/api/workflow.py`: structured errors
+  - `app/api/workflows.py`: output-fields endpoint
+- **Frontend, new:** `tests/stabilization.test.tsx` (14 tests).
+- **Frontend, modified:**
+  - `components/editor/fields.tsx`: JSON template parsing, `JsonTemplateEditor`, JSON-mode `KeyValueEditor`
+  - `components/editor/NodeConfigPanel.tsx`: new widgets, inferred fields in the data picker
+  - `lib/workflowMapping.ts`
+  - `lib/api.ts`
+  - `types/workflow.ts`
+- **Docs:** `docs/NODE_CATALOGUE.md` (new), this file, and `docs/IMPLEMENTATION_PROGRESS.md`.
+
+### Phase 0 test results (after the changes)
+- **Backend:** `python -m pytest -q` gave **228 passed, 2 skipped** (the 2 `live` tests were not selected). `ruff check app tests alembic/env.py` was clean.
+- **Frontend:**
+  - `npm test`: **40 passed** (5 files).
+  - `npm run typecheck`: OK.
+  - `npm run lint`: OK; same single pre-existing warning.
+  - `npm run build`: OK.
+- **Live:** one Gemini designer call with the configured key succeeded, and one with a deliberately invalid key returned the classified error.
+
+### Behaviour changes to be aware of
+- A saved workflow whose Set node has an empty value (with a type other than `string`) now fails validation with a clear message. Before, it ran and produced `""`, or `False` for booleans. New Set nodes start with no fields.
+- Set `number` fields reject `NaN` and `Infinity`.
+- `/api/workflows/generate` error `detail` is now an object `{category, message, suggestion, status_code, model}` instead of a plain string. The frontend already reads `detail.message`.
 
 ## Milestone 1 — Core executable workflow engine: COMPLETE
 

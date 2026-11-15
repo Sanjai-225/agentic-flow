@@ -294,7 +294,16 @@ On startup, executions still marked `running` from a previous process are set to
 
 ---
 
-## MILESTONE 2 — Models, LLM node, universal Agent node (NOT AUTHORIZED YET)
+## MILESTONE 2 — Models, LLM node, universal Agent node (AUTHORIZED 2026-11-15)
+
+> **As implemented:** the authorized Milestone 2 master prompt extended this section. It added node-library cleanup, the Form and Schedule triggers, Switch / Merge / Loop / Date & Time / Array, and Gemini and Gemma capability updates.
+> - **Implementation records:** see `docs/NODE_CATALOGUE.md`, `docs/AI_PROVIDERS_AND_AGENT.md`, `docs/TRIGGERS.md` and `IMPLEMENTATION_STATUS.md`.
+> - **Differences from the original sketch below:**
+>   - `ai.llm_generate` and `ai.extract` became a single `ai.generate` node (text or schema-validated JSON).
+>   - The agent has no on-disk checkpointer. Durable pause/resume is Milestone 4.
+>   - Built-in tools are standalone read-only tools; they are not wrappers around workflow nodes.
+>   - Platform keys are opt-in in production.
+
 1. **Verify first:** check current package APIs against the official docs and pin versions: `langchain-core`, `langchain-anthropic`, `langchain-openai`, `langchain-google-genai`, `langgraph`, `langgraph-checkpoint-sqlite`. Python 3.13 compatibility must be confirmed. Model IDs must be verified against the provider docs before they are added. The brief's candidates (Claude Opus 5.5 / Sonnet 5.5, GPT-6.1 Sol / GPT-6 Astra, Gemini 3.8 Flash) are added only once confirmed.
 2. **`ai/providers.py`:** a model catalog with these fields for each model:
    - provider, model_id, display_name, credential_env (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or a user credential reference

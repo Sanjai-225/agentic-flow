@@ -92,6 +92,12 @@ export default function WorkflowEditor({ workflowId }: { workflowId: string | nu
           {s.dirty ? ' · unsaved changes' : ''}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {s.workflowId && (
+            <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]" title="Webhook, form and schedule triggers only start runs while the workflow is active. Manual runs always work.">
+              <input type="checkbox" aria-label="Workflow active" checked={s.active} onChange={(e) => s.setActive(e.target.checked)} />
+              {s.active ? 'Active' : 'Inactive'}
+            </label>
+          )}
           <button className="btn-ghost" onClick={() => setShowDesigner((v) => !v)}>
             ✦ AI Designer
           </button>

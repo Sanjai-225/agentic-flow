@@ -91,8 +91,8 @@ class WorkflowGenerator:
             if workflow is None:
                 continue
             best_structural = workflow
-            # Structurally valid. Executable nodes must also have runnable configs; feed those
-            # problems back to the designer while retries remain (design-only nodes are allowed).
+            # Structurally valid. Every node must be a registered operation with a runnable config; feed
+            # problems back to the designer while (bounded) retries remain.
             last_errors = self._executability_errors(workflow)
             if not last_errors:
                 break
@@ -211,20 +211,26 @@ class WorkflowGenerator:
 
     @staticmethod
     def _executability_errors(workflow: WorkflowSchema) -> List[str]:
-        """Planner problems on *executable* nodes that the designer can fix (config shape, ports, mappings)."""
+        """Planner problems the designer can fix: unsupported/unregistered operations (replace them with
+        registered ones), config shape, ports and mappings. Credential problems are left to the user."""
         from app.core.errors import ErrorCategory
         from app.engine.planner import plan_workflow
         from app.services.workflow_upgrade import upgrade_workflow
 
         upgraded = upgrade_workflow(workflow)
         plan = plan_workflow(upgraded)
-        fixable = {ErrorCategory.SCHEMA_VALIDATION, ErrorCategory.INVALID_MAPPING, ErrorCategory.GRAPH_VALIDATION}
+        fixable = {ErrorCategory.SCHEMA_VALIDATION, ErrorCategory.INVALID_MAPPING, ErrorCategory.GRAPH_VALIDATION,
+                   ErrorCategory.UNSUPPORTED_CAPABILITY}
         errors: List[str] = []
         for issue in plan.errors:
             if issue.category not in fixable:
                 continue
+            if issue.category == ErrorCategory.UNSUPPORTED_CAPABILITY:
+                errors.append(f"[{issue.category.value}] {issue.message} Replace this node with one of the "
+                              "registry operations; do not invent node types.")
+                continue
             if issue.node_id and issue.node_id not in plan.definitions:
-                continue  # design-only / unsupported node: not a config problem
+                continue  # config errors of an unsupported node are covered by its capability error
             definition = plan.definitions.get(issue.node_id or "")
             hint = (f" Valid config example for {definition.operation_id}: "
                     f"{json.dumps(definition.example_config)}") if definition and issue.category == \

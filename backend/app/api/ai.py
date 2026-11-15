@@ -34,7 +34,7 @@ async def list_providers(_user: User = Depends(get_current_user)) -> List[Dict[s
 
 @router.get("/tools")
 async def list_tools(_user: User = Depends(get_current_user)) -> List[Dict[str, Any]]:
-    """Tools the Universal Agent may be granted (each must still be selected per node)."""
+    """Tools the AI Agent may be granted (each must still be selected per node)."""
     from app.ai.tools import get_tool_registry
 
     return [t.public_view() for t in get_tool_registry().list_tools()]

@@ -1,4 +1,4 @@
-"""AI Generate, Universal Agent, provider routing, credentials and tool security (Milestone 2, Phases 2-4).
+"""AI Generate, AI Agent, provider routing, credentials and tool security (Milestone 2, Phases 2-4).
 
 ALL inference in this file is MOCKED with the scripted fake chat model (tests/fake_llm.py). The real router,
 structured-output, LangGraph agent, tool registry, executor, runner and persistence code run unchanged.

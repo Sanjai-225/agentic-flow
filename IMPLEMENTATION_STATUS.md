@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-15 — Milestone 1 complete. **Milestone 2 implemented, validated and committed on `testing`**. One item is still open: live OpenAI and Anthropic *inference*, blocked because both provider accounts have no credit (not a code issue). Milestones 3–4 not authorized._
 
-## Milestone 2 — Universal AI Agent, providers, AI Generate, triggers, flow nodes: VALIDATED (one external item open)
+## Milestone 2 — AI Agent, providers, AI Generate, triggers, flow nodes: VALIDATED (one external item open)
 
 All phases (0–7) are implemented, every workflow A–I passes end to end on a real running stack, and cross-provider fallback is verified **live**.
 

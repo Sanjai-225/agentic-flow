@@ -25,7 +25,7 @@ CREDENTIAL_TYPES: Dict[str, Dict[str, Any]] = {
     "http_basic": {"label": "HTTP Basic auth", "fields": ["username", "password"], "public": ["username"],
                    "masked": []},
     "http_header": {"label": "HTTP header", "fields": ["name", "value"], "public": ["name"], "masked": []},
-    # AI model provider API keys (Milestone 2). Used only by AI Generate / Universal Agent nodes.
+    # AI model provider API keys (Milestone 2). Used only by AI Generate / AI Agent nodes.
     "openai_api_key": {"label": "OpenAI API key", "fields": ["api_key"], "public": [], "masked": ["api_key"],
                        "provider": "openai"},
     "anthropic_api_key": {"label": "Anthropic API key", "fields": ["api_key"], "public": [], "masked": ["api_key"],

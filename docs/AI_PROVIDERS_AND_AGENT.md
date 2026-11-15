@@ -1,8 +1,8 @@
-# AI providers, AI Generate and the Universal Agent (Milestone 2)
+# AI providers, AI Generate and the AI Agent (Milestone 2)
 
 ## Architecture
 ```text
-AI Generate / Universal Agent node        (executors/ai.py, registered like any other node)
+AI Generate / AI Agent node        (executors/ai.py, registered like any other node)
         │  config validated by the planner (catalogue, capabilities, tools, output schema)
         ▼
 ModelRouter (ai/router.py)                primary → bounded retries → eligible fallback, usage records
@@ -13,7 +13,7 @@ Structured output (ai/structured.py)      native JSON-schema mode + jsonschema v
 Agent graph (ai/agent.py)                 LangGraph StateGraph: call_model ⇄ execute_tools → finalize
 Tool registry (ai/tools/)                 built-in provider; Composio can be added as another ToolProvider
 ```
-- **The workflow engine is unchanged.** An AI node is an ordinary node: retries, timeouts, cancellation, persistence, redaction and history all come from the existing runner. LangGraph runs only *inside* the Universal Agent node.
+- **The workflow engine is unchanged.** An AI node is an ordinary node: retries, timeouts, cancellation, persistence, redaction and history all come from the existing runner. LangGraph runs only *inside* the AI Agent node.
 - **Not used for AI nodes.** The Gemini workflow designer and Gemma reviewer (`services/llm_service.py`) keep their own REST/SDK path and settings.
 
 ## Providers and verified models
@@ -68,7 +68,7 @@ Tool registry (ai/tools/)                 built-in provider; Composio can be add
   - `max_retries`, `max_repair_attempts`, `max_input_chars`
 - **Output:** `{result, provider, model, usage, finish_reason}`. `result` is the parsed, schema-validated object, never a JSON string. Read it downstream with `{{nodes.ai_generate_1.output.result.category}}`.
 
-## Universal Agent (`ai.agent`)
+## AI Agent (`ai.agent`)
 - **One node type.** Instructions, tools and output schema define the task.
 - **Config:**
   - `model`, optional `fallback_model`

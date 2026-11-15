@@ -671,7 +671,7 @@ def test_reviewer_cannot_pass_planner_invalid_workflow():
     assert "Overridden to failed" in review.summary
     capability = [i for i in review.issues if i.category == "capability"]
     assert capability and capability[0].affected_node_ids == ["n2"]
-    assert "Universal Agent" in capability[0].suggested_correction
+    assert "AI Agent" in capability[0].suggested_correction
     # The LLM was told about the facts.
     user_prompt = mock_llm.generate_review_json.call_args.kwargs["user_prompt"]
     assert "DETERMINISTIC VALIDATION FACTS" in user_prompt and "removed from the library" in user_prompt

@@ -103,7 +103,7 @@ These six are not separate entries in the registry.
 | `core.end` | End | logic | existing | `test_execution_api.py` |
 | `http.request` | HTTP Request | tools | existing | `test_http_node.py` |
 | `ai.generate` | AI Generate | ai_agent | **new** | `test_ai_nodes.py`, `test_ai_live.py` |
-| `ai.agent` | Universal AI Agent | ai_agent | **new** | `test_ai_nodes.py`, `test_ai_live.py` |
+| `ai.agent` | AI Agent | ai_agent | **new** | `test_ai_nodes.py`, `test_ai_live.py` |
 
 ### Legacy workflow compatibility
 - **Saved workflows are untouched.** A workflow saved before Milestone 2 keeps its original operation (e.g. `llm_agent`), `type`, config and connections.

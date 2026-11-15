@@ -1,4 +1,4 @@
-"""AI node executors: AI Generate (``ai.generate``) and the Universal Agent (``ai.agent``).
+"""AI node executors: AI Generate (``ai.generate``) and the AI Agent (``ai.agent``).
 
 Both run real inference through the provider layer (``app.ai``). Nothing here is mocked: tests replace
 only the provider client via ``app.ai.providers.set_chat_model_factory``.

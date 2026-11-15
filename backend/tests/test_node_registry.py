@@ -197,4 +197,4 @@ def test_api_legacy_catalogue(client: TestClient):
     data = response.json()
     assert len(data) == 24
     agent = next(item for item in data if item["node_type"] == "llm_agent")
-    assert "Universal Agent" in agent["replacement"] and agent["reason"]
+    assert "AI Agent" in agent["replacement"] and agent["reason"]

@@ -53,7 +53,7 @@ LEGACY_NODE_TYPES: Dict[str, LegacyNodeType] = {n.node_type: n for n in [
        "Use HTTP Request against the service's webhook URL."),
     _l("llm_agent", "AI Agent / LLM Reasoning (legacy)", "ai_agent",
        "Generative reasoning and instruction following.", "The legacy design-only AI node never executed.",
-       "Replace it with the Universal Agent (ai.agent) or AI Generate (ai.generate)."),
+       "Replace it with the AI Agent (ai.agent) or AI Generate (ai.generate)."),
     _l("text_classifier", "Intent & Category Classifier (legacy)", "ai_agent",
        "Categorizes text into predefined classes.", "The legacy design-only AI node never executed.",
        "Replace it with AI Generate (ai.generate) and an output schema with an enum."),

@@ -76,7 +76,7 @@ def ai_definitions() -> List[NodeDefinition]:
         NodeDefinition(
             operation_id="ai.agent",
             node_type="ai_agent",
-            label="Universal AI Agent",
+            label="AI Agent",
             category=NodeCategory.AI_AGENT,
             description="Configurable agent (LangGraph) that reasons over mapped inputs and may call explicitly "
                         "allowed tools in a bounded loop, then returns text or schema-validated JSON. One node type "

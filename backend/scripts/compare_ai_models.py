@@ -10,7 +10,7 @@ For every model it runs, through the same LangChain adapters the AI nodes use:
   2. structured     - schema-constrained JSON classification, validated with jsonschema (what AI Generate / the
                       Agent's final answer need)
   3. tool calling   - does it call the calculator tool with arguments that pass the tool's own validation
-                      (what the Universal Agent needs)
+                      (what the AI Agent needs)
 
 Recommendation per provider:
   primary  = the most capable model (catalogue order) that passed every check

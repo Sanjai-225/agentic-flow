@@ -1,4 +1,4 @@
-"""Secure tool registry for the Universal Agent.
+"""Secure tool registry for the AI Agent.
 
 Every tool has a stable id, a pydantic input model (``extra="forbid"``), an output model, a timeout,
 side-effect and permission metadata, and a real async executor. Tools are grouped by ``ToolProvider``

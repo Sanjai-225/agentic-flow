@@ -1,4 +1,4 @@
-"""Verified model catalogue for AI Generate and the Universal Agent.
+"""Verified model catalogue for AI Generate and the AI Agent.
 
 Only hosted API providers are supported in Milestone 2: OpenAI, Anthropic and
 Google Gemini. A node may only use a (provider, model) pair listed here; the

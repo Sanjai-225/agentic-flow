@@ -34,7 +34,7 @@ Tracks the 4 sequential milestones defined in [`MASTER_IMPLEMENTATION_PLAN.md`](
 | 0 | Baseline, node inventory, Milestone 1 fix list (a–f) | Done, tested | `test_m1_stabilization.py`, `test_output_fields.py`, `frontend/tests/stabilization.test.tsx` |
 | 1 | Node library cleanup (24 removed) and legacy compatibility | Done, tested | `test_legacy_workflows.py`, `test_node_registry.py`, `test_workflow_upgrade.py` |
 | 2 | API model providers (OpenAI / Anthropic / Gemini) | Done. Gemini live-tested; OpenAI/Anthropic **not live-tested** (no keys) | `test_ai_nodes.py`, `test_ai_units.py`, `test_ai_live.py` |
-| 3 | Universal Agent (LangChain + LangGraph, tool registry) | Done, tested, live on Gemini | `test_ai_nodes.py`, E2E C/D/E |
+| 3 | AI Agent (LangChain + LangGraph, tool registry) | Done, tested, live on Gemini | `test_ai_nodes.py`, E2E C/D/E |
 | 4 | AI Generate | Done, tested, live on Gemini | `test_ai_nodes.py`, E2E B |
 | 5 | Form and Schedule triggers | Done, tested, live E2E | `test_triggers.py`, E2E F/G |
 | 6 | Switch, Merge, Loop, Date & Time, Array | Done, tested, live E2E | `test_flow_nodes.py`, E2E H/I |

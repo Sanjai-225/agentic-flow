@@ -1,4 +1,4 @@
-"""Universal Agent runtime: a bounded LangGraph tool loop.
+"""AI Agent runtime: a bounded LangGraph tool loop.
 
 Graph::
 

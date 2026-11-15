@@ -178,7 +178,7 @@ class AgentLimits(_StrictConfig):
 
 
 class AgentConfig(_StrictConfig):
-    """Universal Agent: instructions + mapped inputs + explicitly allowed tools + optional output schema."""
+    """AI Agent: instructions + mapped inputs + explicitly allowed tools + optional output schema."""
 
     model: ModelTarget
     fallback_model: Optional[ModelTarget] = None

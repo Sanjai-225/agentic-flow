@@ -38,7 +38,7 @@ def test_legacy_workflow_saves_reloads_and_is_preserved(app_client: TestClient, 
     by_node = {i["node_id"]: i for i in validation["issues"] if i["node_id"]}
     assert by_node["agent_1"]["category"] == "UNSUPPORTED_CAPABILITY"
     assert "removed from the library" in by_node["agent_1"]["message"]
-    assert "Universal Agent (ai.agent)" in by_node["agent_1"]["suggestion"]
+    assert "AI Agent (ai.agent)" in by_node["agent_1"]["suggestion"]
     assert "configuration and connections are preserved" in by_node["agent_1"]["suggestion"]
     assert "Human-in-the-Loop Approval" in by_node["approve_1"]["message"]
 

@@ -1,4 +1,4 @@
-"""Text and structured (JSON Schema) generation shared by AI Generate and the Universal Agent.
+"""Text and structured (JSON Schema) generation shared by AI Generate and the AI Agent.
 
 Structured output uses each provider's native JSON-schema mode through LangChain, then validates the
 result against the *user's* schema with ``jsonschema``. Invalid output triggers a bounded repair loop

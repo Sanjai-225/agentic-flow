@@ -63,7 +63,7 @@ class Settings:
         self.WEBHOOK_MAX_BODY_BYTES: int = int(os.getenv("WEBHOOK_MAX_BODY_BYTES", str(1024 * 1024)))
 
         # --- AI model providers (Milestone 2) ---
-        # Platform-level keys: used by AI Generate / Universal Agent nodes only when a node selects no user
+        # Platform-level keys: used by AI Generate / AI Agent nodes only when a node selects no user
         # credential AND AI_ALLOW_PLATFORM_KEYS is on (default: on outside production, off in production).
         self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
         self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "").strip()

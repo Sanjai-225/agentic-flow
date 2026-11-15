@@ -32,6 +32,16 @@ for _name in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
     if _value and not os.environ.get(f"LIVE_{_name}"):
         os.environ[f"LIVE_{_name}"] = _value
 
+# Optional: run the whole suite against a real PostgreSQL database (e.g. a disposable local server) with
+# TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/agentic_flow_test. The database name must contain
+# "test" so a production DATABASE_URL can never be used by accident. Default: a throwaway SQLite file.
+_TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
+if _TEST_DB_URL:
+    from sqlalchemy.engine import make_url as _make_url
+
+    if "test" not in (_make_url(_TEST_DB_URL.replace("postgres://", "postgresql://", 1)).database or ""):
+        raise RuntimeError("TEST_DATABASE_URL must point at a disposable database whose name contains 'test'.")
+
 os.environ.update(
     {
         "OPENAI_API_KEY": "",
@@ -39,7 +49,7 @@ os.environ.update(
         "GEMINI_API_KEY": "",
         "MOCK_DEV_MODE": "true",
         "APP_ENV": "test",
-        "DATABASE_URL": f"sqlite+aiosqlite:///{(_TMP_DIR / 'test.db').as_posix()}",
+        "DATABASE_URL": _TEST_DB_URL or f"sqlite+aiosqlite:///{(_TMP_DIR / 'test.db').as_posix()}",
         "JWT_SECRET": "test-jwt-secret-not-for-production",
         "HTTP_ALLOW_PRIVATE_NETWORKS": "true",
         # The background schedule loop is off in the suite for determinism; scheduler tests drive the real

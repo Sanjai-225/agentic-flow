@@ -4,12 +4,15 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { BACKEND_NOT_CONFIGURED, resolveBackendUrl } from '@/lib/backendUrl';
+
 export const dynamic = 'force-dynamic';
 
 const FORWARDED_REQUEST_HEADERS = ['authorization', 'content-type', 'accept'];
 
 async function proxy(request: NextRequest, { params }: { params: { path: string[] } }) {
-  const backendBase = process.env.BACKEND_URL || 'http://127.0.0.1:8000';
+  const backendBase = resolveBackendUrl();
+  if (!backendBase) return NextResponse.json({ detail: BACKEND_NOT_CONFIGURED }, { status: 503 });
   const target = new URL(`/api/${params.path.map(encodeURIComponent).join('/')}`, backendBase);
   request.nextUrl.searchParams.forEach((value, key) => target.searchParams.append(key, value));
 

@@ -56,6 +56,10 @@ class Scheduler:
         self._stopping = asyncio.Event()
 
     # ------------------------------------------------------------------ lifecycle
+    @property
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
     def start(self) -> None:
         if self._task is None:
             self._stopping.clear()

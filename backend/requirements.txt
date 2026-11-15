@@ -10,6 +10,9 @@ sqlalchemy==2.1.8
 aiosqlite==0.22.1
 greenlet==3.5.6
 alembic==1.20.1
+# PostgreSQL (production / Supabase): asyncpg for the app, psycopg 3 for Alembic migrations
+asyncpg==0.32.0
+psycopg[binary]==3.3.9
 # Execution engine / HTTP node
 httpx==0.28.1
 # Auth and credential encryption

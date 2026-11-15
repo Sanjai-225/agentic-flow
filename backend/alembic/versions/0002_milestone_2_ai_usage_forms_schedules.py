@@ -105,7 +105,7 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True))
 
     with op.batch_alter_table('workflows', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('active', sa.Boolean(), server_default=sa.text('1'), nullable=False))
+        batch_op.add_column(sa.Column('active', sa.Boolean(), server_default=sa.true(), nullable=False))
 
     # ### end Alembic commands ###
 

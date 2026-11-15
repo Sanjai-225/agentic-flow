@@ -74,9 +74,19 @@ def _asyncpg_ssl(mode: str) -> Any:
     return ctx
 
 
+def clean_database_url(raw: str) -> str:
+    """Undo common copy-paste slips: surrounding whitespace/quotes and a pasted ``DATABASE_URL=`` prefix."""
+    text = (raw or "").strip()
+    if text.upper().startswith("DATABASE_URL="):
+        text = text[len("DATABASE_URL="):].strip()
+    while len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    return text
+
+
 def parse_database_url(raw: str) -> DatabaseConfig:
     """Normalise ``raw`` into async (app) and sync (Alembic) SQLAlchemy URLs."""
-    text = (raw or "").strip()
+    text = clean_database_url(raw)
     if not text:
         raise DatabaseUrlError("DATABASE_URL is empty.")
     if text.startswith("postgres://"):  # Heroku/Render-style scheme alias

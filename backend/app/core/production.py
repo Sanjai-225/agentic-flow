@@ -7,6 +7,7 @@ never included in messages. ``APP_ENV=production`` refuses to start while any ``
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import List
@@ -58,9 +59,15 @@ def check_settings(settings: Settings, *, production: bool | None = None) -> Lis
         issues.append(ConfigIssue("error", "DATABASE_URL", str(exc)))
         db = None
     if strict and db is not None:
-        if db.is_sqlite:
+        if db.is_sqlite and not os.getenv("DATABASE_URL", "").strip():
+            issues.append(ConfigIssue("error", "DATABASE_URL", "is not set (empty), so the app fell back to a local "
+                                      "SQLite file. Paste the Supabase session pooler connection string."))
+        elif db.is_sqlite:
             issues.append(ConfigIssue("error", "DATABASE_URL", "SQLite is not supported in production (the hosting "
                                       "filesystem is ephemeral). Use the Supabase PostgreSQL connection string."))
+        elif "[YOUR-PASSWORD]" in settings.DATABASE_URL.upper() or "<" in settings.DATABASE_URL:
+            issues.append(ConfigIssue("error", "DATABASE_URL", "still contains a placeholder such as [YOUR-PASSWORD]; "
+                                      "put the real database password in its place."))
         elif db.ssl_mode in {None, "disable", "allow", "prefer"} and not _is_local(f"//{db.async_url.host}"):
             issues.append(ConfigIssue("error", "DATABASE_URL", "connections to a hosted database must use TLS "
                                       "(sslmode=require or stricter)."))

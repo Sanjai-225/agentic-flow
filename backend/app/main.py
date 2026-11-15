@@ -36,8 +36,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Configuration: %s", issue)
     if current.is_production and config_errors(issues):
         # Names only - values are never logged. See scripts/validate_environment.py.
-        raise RuntimeError("Refusing to start with APP_ENV=production: invalid configuration for "
-                           + ", ".join(sorted({i.name for i in config_errors(issues)})))
+        # Messages describe the problem only; they never contain the values.
+        raise RuntimeError("Refusing to start with APP_ENV=production: "
+                           + " | ".join(f"{i.name}: {i.message}" for i in config_errors(issues)))
     _ = current.effective_jwt_secret  # fail fast in production without JWT_SECRET
     if current.DB_AUTO_MIGRATE:
         await asyncio.to_thread(run_migrations, current.DATABASE_URL)

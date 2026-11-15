@@ -74,13 +74,25 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
   const [loadingPhase, setLoadingPhase] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = useCallback(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), []);
-  useEffect(scrollToBottom, [messages, scrollToBottom]);
+  // Effects must return nothing or a cleanup function. Newer browsers return a Promise from
+  // scrollIntoView(), so never return its result from an effect.
+  const scrollToBottom = useCallback(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
   useEffect(() => {
-    if (!isLoading) return setLoadingPhase(0);
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingPhase(0);
+      return undefined;
+    }
     const t1 = setTimeout(() => setLoadingPhase(1), 3000);
     const t2 = setTimeout(() => setLoadingPhase(2), 8000);
-    return () => (clearTimeout(t1), clearTimeout(t2));
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [isLoading]);
 
   const handleSubmit = async (promptText?: string) => {

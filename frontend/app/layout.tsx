@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'AI Workflow Designer',
-  description: 'Design intelligent automation workflows using natural language',
+  title: 'Agentic Flow',
+  description: 'Design, run and inspect automation workflows',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

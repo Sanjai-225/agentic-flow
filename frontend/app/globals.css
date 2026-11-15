@@ -2,81 +2,188 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Dark-first glass theme. All colours are tokens so components stay consistent. */
 :root {
-  --background: #f8f9fb;
-  --surface: #ffffff;
-  --surface-hover: #f1f3f5;
-  --border: #e2e5e9;
-  --border-light: #eef0f3;
-  --text-primary: #1a1d23;
-  --text-secondary: #5f6775;
-  --text-muted: #8b95a5;
-  --accent: #4f46e5;
-  --accent-light: #eef2ff;
-  --accent-hover: #4338ca;
-  --success: #10b981;
-  --error: #ef4444;
-  --error-light: #fef2f2;
+  color-scheme: dark;
+  --background: #070a12;
+  --background-glow-1: rgba(99, 102, 241, 0.16);
+  --background-glow-2: rgba(16, 185, 129, 0.08);
+  --surface: rgba(255, 255, 255, 0.045);
+  --surface-strong: rgba(17, 22, 35, 0.86);
+  --surface-hover: rgba(255, 255, 255, 0.08);
+  --surface-sunken: rgba(0, 0, 0, 0.28);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-light: rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text-primary: #eef1f7;
+  --text-secondary: #b3bccb;
+  --text-muted: #7d8799;
+  --accent: #818cf8;
+  --accent-strong: #6366f1;
+  --accent-light: rgba(129, 140, 248, 0.14);
+  --accent-hover: #a5b4fc;
+  --edge: #5b6477;
+
+  /* Execution status palette */
+  --st-pending: #6b7385;
+  --st-running: #60a5fa;
+  --success: #34d399;
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --st-skipped: #4b5263;
+  --error: var(--danger);
+  --error-light: rgba(248, 113, 113, 0.12);
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
-  background: var(--background);
+  height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, var(--background-glow-1), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, var(--background-glow-2), transparent 60%),
+    var(--background);
   color: var(--text-primary);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   margin: 0;
   padding: 0;
 }
 
-/* Scrollbar */
+@layer components {
+  .glass {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .glass-strong {
+    background: var(--surface-strong);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply btn text-white;
+    background: var(--accent-strong);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #4f46e5;
+  }
+  .btn-ghost {
+    @apply btn;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+  .btn-danger {
+    @apply btn;
+    color: var(--danger);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    background: var(--error-light);
+  }
+  .field {
+    @apply w-full rounded-lg px-2.5 py-1.5 text-xs outline-none transition-colors;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+  .field:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-light);
+  }
+  .field-mono {
+    @apply field font-mono;
+  }
+  .label {
+    @apply mb-1 block text-[11px] font-medium uppercase tracking-wide;
+    color: var(--text-muted);
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: rgba(255, 255, 255, 0.22);
 }
 
-/* React Flow overrides for light theme */
+/* React Flow — dark glass */
 .react-flow__background {
-  background: #fafbfc !important;
+  background: transparent !important;
 }
 .react-flow__minimap {
-  background: #ffffff !important;
+  background: var(--surface-strong) !important;
   border: 1px solid var(--border) !important;
-  border-radius: 8px !important;
+  border-radius: 10px !important;
 }
 .react-flow__controls {
   border: 1px solid var(--border) !important;
-  border-radius: 8px !important;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.08) !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: none !important;
 }
 .react-flow__controls-button {
-  background: #ffffff !important;
+  background: var(--surface-strong) !important;
   border-bottom: 1px solid var(--border) !important;
-  color: var(--text-secondary) !important;
+  fill: var(--text-secondary) !important;
 }
 .react-flow__controls-button:hover {
   background: var(--surface-hover) !important;
-  color: var(--text-primary) !important;
 }
-.react-flow__edge-path {
-  stroke: #94a3b8 !important;
-  stroke-width: 2 !important;
+.react-flow__edge-text {
+  fill: var(--text-secondary) !important;
+  font-size: 10px !important;
 }
-.react-flow__edge.animated .react-flow__edge-path {
-  stroke-dasharray: 5;
-  animation: flowEdge 0.6s linear infinite;
+.react-flow__edge-textbg {
+  fill: var(--surface-strong) !important;
 }
-@keyframes flowEdge {
-  to { stroke-dashoffset: -10; }
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--accent) !important;
+}
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--background);
+  background: var(--text-muted);
+}
+.react-flow__handle:hover {
+  background: var(--accent);
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(96, 165, 250, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
+}
+.status-running {
+  animation: pulse-ring 1.4s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-running {
+    animation: none;
+  }
 }

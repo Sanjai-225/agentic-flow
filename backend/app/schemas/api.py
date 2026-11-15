@@ -1,0 +1,132 @@
+"""Request/response models for the workflow platform API."""
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def _lower(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def _lower(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+
+class SaveWorkflowRequest(BaseModel):
+    definition: Dict[str, Any] = Field(..., description="Canonical workflow JSON (schema v1 or v2).")
+
+
+class ValidateWorkflowRequest(BaseModel):
+    definition: Dict[str, Any]
+
+
+class WorkflowSummary(BaseModel):
+    id: str
+    name: str
+    description: str
+    version: int
+    has_webhook: bool
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+    last_execution_status: Optional[str] = None
+
+
+class WorkflowRecord(WorkflowSummary):
+    definition: Dict[str, Any]
+    validation: Dict[str, Any]
+
+
+class RunWorkflowRequest(BaseModel):
+    input: Any = Field(default_factory=dict, description="Payload delivered to the trigger node.")
+
+
+class WebhookInfo(BaseModel):
+    token: str
+    url: str
+    method: str
+
+
+class CredentialCreate(BaseModel):
+    type: str
+    name: str = Field(..., min_length=1, max_length=255)
+    data: Dict[str, Any]
+
+
+class CredentialOut(BaseModel):
+    id: str
+    type: str
+    name: str
+    hints: Dict[str, str] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+
+
+class NodeExecutionOut(BaseModel):
+    node_id: str
+    operation: str
+    label: str
+    position: int
+    status: str
+    attempts: int
+    inputs: Any = None
+    output: Any = None
+    error: Optional[Dict[str, Any]] = None
+    route: Any = None
+    metadata: Optional[Dict[str, Any]] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+
+
+class ExecutionLogOut(BaseModel):
+    node_id: Optional[str]
+    level: str
+    message: str
+    data: Any = None
+    ts: datetime
+
+
+class ExecutionSummary(BaseModel):
+    id: str
+    workflow_id: str
+    workflow_version: int
+    status: str
+    trigger_type: str
+    created_at: Optional[datetime]
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
+    duration_ms: Optional[float]
+    error: Optional[Dict[str, Any]] = None
+
+
+class ExecutionDetail(ExecutionSummary):
+    correlation_id: str
+    input: Any = None
+    output: Any = None
+    nodes: List[NodeExecutionOut]
+    logs: List[ExecutionLogOut]
+    workflow_definition: Optional[Dict[str, Any]] = None

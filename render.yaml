@@ -15,7 +15,7 @@ services:
     runtime: python
     rootDir: backend
     plan: free
-    region: oregon            # closest to your Supabase project: oregon / ohio / virginia / frankfurt / singapore
+    region: singapore         # same region as the Supabase project (ap-southeast-1) for low database latency
     branch: main
     autoDeployTrigger: commit
     buildFilter:

@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Execution, ExecutionLog, NodeExecution, WorkflowVersion
+from app.db.models import AiUsageRecord, Execution, ExecutionLog, NodeExecution, WorkflowVersion
 from app.engine.contracts import LogEntry
 from app.engine.redaction import storable
 
@@ -78,4 +78,14 @@ class ExecutionStore:
                 session.add(ExecutionLog(execution_id=execution_id, node_id=e.node_id, level=e.level,
                                          message=e.message[:4000], data=storable(e.data) if e.data else None,
                                          ts=e.ts))
+            await session.commit()
+
+    async def add_ai_usage(self, execution_id: str, user_id: str, workflow_id: str, node_id: str,
+                           record: Dict[str, Any]) -> None:
+        """Persist one model call's provider-reported usage, tied to the execution, node and user."""
+        allowed = {"operation", "provider", "model", "credential_source", "status", "error_category",
+                   "fallback_used", "input_tokens", "output_tokens", "total_tokens", "duration_ms"}
+        async with self._sm() as session:
+            session.add(AiUsageRecord(execution_id=execution_id, user_id=user_id, workflow_id=workflow_id,
+                                      node_id=node_id, **{k: v for k, v in record.items() if k in allowed}))
             await session.commit()

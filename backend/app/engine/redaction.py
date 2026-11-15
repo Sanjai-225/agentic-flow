@@ -47,3 +47,18 @@ def redact_text(text: str, secrets: list[str] | None = None) -> str:
         if s and len(s) >= 4:
             out = out.replace(s, REDACTED)
     return out
+
+
+def scrub_secrets_in(value: Any, secrets: set[str] | list[str] | None) -> Any:
+    """Recursively replace literal secret values inside strings (keys, nested dicts and lists)."""
+    usable = [s for s in (secrets or []) if s and len(s) >= 4]
+    if not usable:
+        return value
+    if isinstance(value, str):
+        return redact_text(value, usable)
+    if isinstance(value, dict):
+        return {(redact_text(k, usable) if isinstance(k, str) else k): scrub_secrets_in(v, usable)
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_secrets_in(v, usable) for v in value]
+    return value

@@ -49,6 +49,101 @@ export function scalarToText(value: unknown): string {
   return String(value);
 }
 
+/* ---------- JSON templates: JSON that may contain {{references}} ----------
+ * The backend keeps the native type of any value that is *exactly one* {{reference}}
+ * (number stays number, object stays object). So the canonical storage is plain JSON whose
+ * typed references are whole strings: {"amount": "{{nodes.set_1.output.amount}}"}.
+ * For readability the editor shows/accepts such references *unquoted*:
+ *   {"amount": {{nodes.set_1.output.amount}}, "note": "Total {{nodes.set_1.output.amount}}"}
+ * Quoted text with other characters around a reference stays a string (interpolation). */
+
+const WHOLE_REF = /^\s*\{\{[^{}]*\}\}\s*$/;
+
+/** Quote every {{...}} token that appears outside a JSON string literal. */
+export function quoteBareReferences(text: string): string {
+  let out = '';
+  let inString = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === '\\') {
+        out += text[i + 1] ?? '';
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '{' && text[i + 1] === '{') {
+      const close = text.indexOf('}}', i + 2);
+      if (close !== -1) {
+        out += JSON.stringify(text.slice(i, close + 2));
+        i = close + 2;
+        continue;
+      }
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+export type TemplateParse = { ok: true; value: unknown } | { ok: false; error: string };
+
+/**
+ * Parse editor text into a typed config value.
+ * - empty -> null
+ * - JSON (objects, arrays, numbers, booleans, null, quoted strings), with bare {{refs}} allowed
+ * - anything else is plain text (embedded {{refs}} are interpolated as text by the backend)
+ * Text that starts like an object/array but is not valid JSON is an error (never silently a string).
+ */
+export function parseJsonTemplate(text: string): TemplateParse {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, value: null };
+  try {
+    return { ok: true, value: JSON.parse(quoteBareReferences(trimmed)) };
+  } catch (e: any) {
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return { ok: false, error: `Invalid JSON: ${e?.message || 'syntax error'}` };
+    }
+    return { ok: true, value: text };
+  }
+}
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Render a stored value for editing; parseJsonTemplate(formatJsonTemplate(v)) round-trips to v. */
+export function formatJsonTemplate(value: unknown, pretty = true): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') {
+    if (WHOLE_REF.test(value)) return value.trim();
+    const reparsed = parseJsonTemplate(value);
+    // Incomplete JSON being typed (parse error) and plain text show as-is; text that would
+    // re-parse as another type (e.g. "42", "true") is shown quoted so it stays a string.
+    if (!reparsed.ok || sameValue(reparsed.value, value)) return value;
+    return JSON.stringify(value);
+  }
+  const json = pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value);
+  // Show whole-reference strings unquoted ("{{x}}" -> {{x}}) to signal that they keep their type.
+  return json.replace(/"(\{\{[^{}"\\]*\}\})"/g, '$1');
+}
+
+/** Parser for single-line JSON-capable inputs: falls back to the raw text while JSON is incomplete. */
+export function parseTemplateValue(text: string): unknown {
+  const parsed = parseJsonTemplate(text);
+  if (!parsed.ok) return text;
+  return parsed.value === null && !text.trim() ? '' : parsed.value;
+}
+
 export function ExpressionInput({
   value,
   onChange,
@@ -56,6 +151,8 @@ export function ExpressionInput({
   multiline,
   ariaLabel,
   parse = false,
+  parser,
+  formatter,
 }: {
   value: unknown;
   onChange: (v: unknown) => void;
@@ -63,11 +160,15 @@ export function ExpressionInput({
   multiline?: boolean;
   ariaLabel?: string;
   parse?: boolean;
+  /** Custom text -> value parser (overrides `parse`). */
+  parser?: (text: string) => unknown;
+  /** Custom value -> text formatter. */
+  formatter?: (value: unknown) => string;
 }) {
   const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
   const setInsert = useInsertTarget((s) => s.setInsert);
-  const text = scalarToText(value);
-  const emit = (t: string) => onChange(parse ? parseScalar(t) : t);
+  const text = formatter ? formatter(value) : scalarToText(value);
+  const emit = (t: string) => onChange(parser ? parser(t) : parse ? parseScalar(t) : t);
   const onFocus = () =>
     setInsert((snippet: string) => {
       const el = ref.current;
@@ -123,7 +224,80 @@ export function JsonEditor({ value, onChange, ariaLabel }: { value: unknown; onC
   );
 }
 
-export function KeyValueEditor({ value, onChange }: { value: Record<string, unknown> | undefined; onChange: (v: Record<string, unknown>) => void }) {
+/**
+ * Multi-line JSON-with-references editor (End output, HTTP body). Commits on blur; invalid
+ * object/array JSON is reported and never saved as a string.
+ */
+export function JsonTemplateEditor({
+  value,
+  onChange,
+  ariaLabel,
+  placeholder,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+  ariaLabel?: string;
+  placeholder?: string | null;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const setInsert = useInsertTarget((s) => s.setInsert);
+  const [text, setText] = useState(() => formatJsonTemplate(value));
+  const [error, setError] = useState<string | null>(null);
+  const last = useRef(value);
+  useEffect(() => {
+    if (!sameValue(value, last.current)) {
+      setText(formatJsonTemplate(value));
+      last.current = value;
+    }
+  }, [value]);
+  const commit = (next: string) => {
+    const parsed = parseJsonTemplate(next);
+    if (!parsed.ok) {
+      setError(parsed.error);
+      return;
+    }
+    setError(null);
+    last.current = parsed.value;
+    onChange(parsed.value);
+  };
+  const onFocus = () =>
+    setInsert((snippet: string) => {
+      const el = ref.current;
+      const current = el?.value ?? text;
+      const start = el?.selectionStart ?? current.length;
+      const end = el?.selectionEnd ?? current.length;
+      const next = current.slice(0, start) + snippet + current.slice(end);
+      setText(next);
+      commit(next);
+    });
+  return (
+    <div>
+      <textarea
+        ref={ref}
+        aria-label={ariaLabel}
+        rows={5}
+        className={`field-mono ${text.includes('{{') ? 'text-[var(--accent-hover)]' : ''}`}
+        placeholder={placeholder || '{"total": {{nodes.set_1.output.amount}}, "note": "Hi {{trigger.name}}"}'}
+        value={text}
+        onFocus={onFocus}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => commit(text)}
+      />
+      {error && <p className="mt-1 text-[10px] text-[var(--danger)]">{error}</p>}
+    </div>
+  );
+}
+
+export function KeyValueEditor({
+  value,
+  onChange,
+  jsonValues = false,
+}: {
+  value: Record<string, unknown> | undefined;
+  onChange: (v: Record<string, unknown>) => void;
+  /** Parse values as JSON templates (objects, arrays, numbers, typed references). */
+  jsonValues?: boolean;
+}) {
   const entries = Object.entries(value || {});
   const update = (rows: [string, unknown][]) => onChange(Object.fromEntries(rows.filter(([k]) => k !== '' || rows.length === 1)));
   return (
@@ -137,7 +311,14 @@ export function KeyValueEditor({ value, onChange }: { value: Record<string, unkn
             onChange={(e) => update(entries.map((row, i) => (i === idx ? [e.target.value, row[1]] : row)))}
           />
           <div className="flex-1">
-            <ExpressionInput ariaLabel="value" parse value={v} onChange={(nv) => update(entries.map((row, i) => (i === idx ? [row[0], nv] : row)))} />
+            <ExpressionInput
+              ariaLabel="value"
+              parse
+              parser={jsonValues ? parseTemplateValue : undefined}
+              formatter={jsonValues ? (val) => formatJsonTemplate(val, false) : undefined}
+              value={v}
+              onChange={(nv) => update(entries.map((row, i) => (i === idx ? [row[0], nv] : row)))}
+            />
           </div>
           <button className="btn-ghost px-2" aria-label="remove" onClick={() => update(entries.filter((_, i) => i !== idx))}>
             ✕

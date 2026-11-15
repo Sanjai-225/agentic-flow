@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_manager
 from app.core.config import get_settings
+from app.core.ratelimit import client_ip, limiter
 from app.core.security import token_matches
 from app.db.models import Workflow
 from app.db.session import get_session
@@ -36,10 +37,17 @@ async def _read_body(request: Request, limit: int) -> bytes:
 async def receive_webhook(workflow_id: str, token: str, request: Request,
                           session: AsyncSession = Depends(get_session),
                           manager: ExecutionManager = Depends(get_manager)) -> Dict[str, Any]:
+    allowed, retry_after = limiter.check(f"webhook:{workflow_id}:{client_ip(request)}",
+                                         get_settings().WEBHOOK_RATE_LIMIT_PER_MINUTE)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Too many webhook requests.",
+                            headers={"Retry-After": str(int(retry_after) + 1)})
     not_found = HTTPException(status_code=404, detail="Webhook not found.")
     record = await session.get(Workflow, workflow_id)
     if record is None or not token_matches(token, record.webhook_token_hash):
         raise not_found
+    if not record.active:
+        raise HTTPException(status_code=409, detail="This workflow is inactive; activate it to accept webhooks.")
 
     definition = await store.get_version_definition(session, record.id, record.current_version)
     workflow = WorkflowSchema.model_validate(definition)

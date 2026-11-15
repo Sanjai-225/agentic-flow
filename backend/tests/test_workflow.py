@@ -186,6 +186,13 @@ def test_diverse_workflow_prompts_mock_generation(category: str, prompt: str) ->
 
     graph_res = GraphValidator.validate(wf)
     assert graph_res.is_valid is True, f"Graph validation failed for {category}: {graph_res.errors}"
+    # Milestone 2: mock designs use only executable operations and pass the execution planner.
+    from app.engine.planner import plan_workflow
+    from app.services.workflow_upgrade import upgrade_workflow
+
+    plan = plan_workflow(upgrade_workflow(wf))
+    assert plan.valid, f"{category}: {[i.message for i in plan.errors]}"
+    assert all(not n.operation.startswith("unsupported:") for n in upgrade_workflow(wf).nodes)
 
 
 # ---------------------------------------------------------------------------
@@ -262,18 +269,26 @@ def sample_workflow() -> WorkflowSchema:
         workflow_id="order-process",
         workflow_name="Order Processing",
         description="Process orders, check payment, invoice, notify",
+        # Executable (planner-valid) workflow so these scenarios exercise the LLM's logical judgement;
+        # planner-invalid workflows are covered by test_reviewer_cannot_pass_planner_invalid_workflow.
         nodes=[
-            NodeSchema(id="n_recv", type="trigger", label="Order Received", config={}),
-            NodeSchema(id="n_check", type="condition", label="Check Payment", config={}),
-            NodeSchema(id="n_inv", type="action", label="Generate Invoice", config={}),
-            NodeSchema(id="n_email", type="notification", label="Email Customer", config={}),
-            NodeSchema(id="n_admin", type="notification", label="Alert Admin", config={}),
+            NodeSchema(id="n_recv", type="webhook_trigger", operation="core.webhook_trigger", label="Order Received",
+                       config={"method": "POST"}),
+            NodeSchema(id="n_check", type="condition", operation="core.if", label="Check Payment",
+                       config={"conditions": {"combinator": "all", "rules": [
+                           {"left": "{{trigger.body.paid}}", "operator": "is_true"}]}}),
+            NodeSchema(id="n_inv", type="api_call", operation="http.request", label="Generate Invoice",
+                       config={"method": "POST", "url": "https://billing.example.com/invoices"}),
+            NodeSchema(id="n_email", type="api_call", operation="http.request", label="Email Customer",
+                       config={"method": "POST", "url": "https://mail.example.com/send"}),
+            NodeSchema(id="n_admin", type="api_call", operation="http.request", label="Alert Admin",
+                       config={"method": "POST", "url": "https://alerts.example.com/notify"}),
         ],
         edges=[
             EdgeSchema(id="e1", source="n_recv", target="n_check"),
-            EdgeSchema(id="e2", source="n_check", target="n_inv", label="success"),
+            EdgeSchema(id="e2", source="n_check", target="n_inv", source_port="true", label="success"),
             EdgeSchema(id="e3", source="n_inv", target="n_email"),
-            EdgeSchema(id="e4", source="n_check", target="n_admin", label="failure"),
+            EdgeSchema(id="e4", source="n_check", target="n_admin", source_port="false", label="failure"),
         ],
         start_nodes=["n_recv"],
         end_nodes=["n_email", "n_admin"],
@@ -484,15 +499,19 @@ def test_scenario_7_corrected_workflow():
     })
     mock_llm.generate_workflow_json.return_value = initial_wf_json
 
-    # Corrected generation JSON
+    # Corrected generation JSON (executable: the database is written through its HTTP API, because
+    # design-only node types such as `database_update` no longer exist and would be rejected).
     corrected_wf_json = json.dumps({
         "workflow_id": "wf-v2",
         "workflow_name": "WF V2 Corrected",
         "description": "V2 Corrected",
         "nodes": [
-            {"id": "n1", "type": "trigger", "label": "Start", "config": {}},
-            {"id": "n_db", "type": "database_update", "label": "Save to DB", "config": {}},
-            {"id": "n2", "type": "output", "label": "End", "config": {}},
+            {"id": "n1", "type": "manual_trigger", "operation": "core.manual_trigger", "label": "Start",
+             "config": {}},
+            {"id": "n_db", "type": "api_call", "operation": "http.request", "label": "Save to DB",
+             "config": {"method": "POST", "url": "https://db.example.com/records", "body_type": "json",
+                        "body": {"saved": True}}},
+            {"id": "n2", "type": "end", "operation": "core.end", "label": "End", "config": {}},
         ],
         "edges": [
             {"id": "e1", "source": "n1", "target": "n_db"},
@@ -578,7 +597,97 @@ def test_generate_endpoint_returns_canonical_v2_with_readiness(app_client: TestC
     body = response.json()
     assert body["schema_version"] == 2
     assert all(node["operation"] for node in body["nodes"])
-    # The invoice mock uses external tools that have no executable implementation yet,
-    # so readiness must say so explicitly instead of pretending it can run.
+    # Milestone 2: the invoice mock is built only from executable operations, and readiness says so.
+    assert body["execution_readiness"]["executable"] is True
+    assert not [i for i in body["execution_readiness"]["issues"] if i["severity"] == "error"]
+
+
+def test_generate_endpoint_reports_unsupported_legacy_nodes(app_client: TestClient, auth_headers: dict) -> None:
+    """Readiness must say explicitly when generated output contains a capability that cannot run."""
+    from app.api.workflow import get_workflow_generator
+
+    legacy_json = json.dumps({
+        "workflow_id": "wf", "workflow_name": "Legacy", "description": "x",
+        "nodes": [
+            {"id": "manual_trigger_1", "type": "manual_trigger", "operation": "core.manual_trigger",
+             "label": "Start", "config": {}},
+            {"id": "agent_1", "type": "llm_agent", "label": "Think", "config": {}},
+            {"id": "end_1", "type": "end", "operation": "core.end", "label": "End", "config": {}},
+        ],
+        "edges": [{"id": "e1", "source": "manual_trigger_1", "target": "agent_1"},
+                  {"id": "e2", "source": "agent_1", "target": "end_1"}],
+        "start_nodes": ["manual_trigger_1"], "end_nodes": ["end_1"],
+    })
+    mock_llm = MagicMock(spec=LLMService)
+    mock_llm.generate_workflow_json.return_value = legacy_json
+    mock_llm.fix_workflow_json.return_value = legacy_json
+    settings = MagicMock()
+    settings.has_gemini_api_key = True
+    settings.MOCK_DEV_MODE = False
+    settings.MAX_GENERATION_RETRIES = 0
+    settings.MAX_REVIEW_CORRECTION_ATTEMPTS = 0
+    settings.ENABLE_WORKFLOW_REVIEW = False
+    app.dependency_overrides[get_workflow_generator] = lambda: WorkflowGenerator(llm_service=mock_llm, settings=settings)
+    try:
+        response = app_client.post("/api/workflows/generate", json={"prompt": "Summarize the input", "review": False},
+                                   headers=auth_headers)
+    finally:
+        app.dependency_overrides.pop(get_workflow_generator, None)
+    assert response.status_code == 200, response.text
+    body = response.json()
     assert body["execution_readiness"]["executable"] is False
-    assert any(i["category"] == "UNSUPPORTED_CAPABILITY" for i in body["execution_readiness"]["issues"])
+    issue = next(i for i in body["execution_readiness"]["issues"] if i["node_id"] == "agent_1")
+    assert issue["category"] == "UNSUPPORTED_CAPABILITY" and "removed from the library" in issue["message"]
+    assert next(n for n in body["nodes"] if n["id"] == "agent_1")["operation"] == "unsupported:llm_agent"
+
+
+# ---------------------------------------------------------------------------
+# Deterministic capability/feasibility facts override the LLM reviewer (Milestone 2)
+# ---------------------------------------------------------------------------
+
+def _passing_llm():
+    mock_llm = MagicMock(spec=LLMService)
+    mock_llm.generate_review_json.return_value = json.dumps({
+        "status": "passed", "summary": "Looks complete.", "issues": [], "clarification_required": False,
+    })
+    return mock_llm
+
+
+def test_reviewer_cannot_pass_planner_invalid_workflow():
+    """Gemma must not approve a workflow that uses removed/unregistered capabilities."""
+    wf = WorkflowSchema(
+        workflow_id="wf", workflow_name="WF",
+        nodes=[
+            NodeSchema(id="n1", type="manual_trigger", operation="core.manual_trigger", label="Start", config={}),
+            NodeSchema(id="n2", type="llm_agent", label="Think", config={}),
+            NodeSchema(id="n3", type="end", operation="core.end", label="End", config={}),
+        ],
+        edges=[EdgeSchema(id="e1", source="n1", target="n2"), EdgeSchema(id="e2", source="n2", target="n3")],
+        start_nodes=["n1"], end_nodes=["n3"],
+    )
+    mock_llm = _passing_llm()
+    review = WorkflowReviewer(llm_service=mock_llm).review("Summarize input", wf)
+    assert review.status == ReviewStatus.FAILED
+    assert "Overridden to failed" in review.summary
+    capability = [i for i in review.issues if i.category == "capability"]
+    assert capability and capability[0].affected_node_ids == ["n2"]
+    assert "Universal Agent" in capability[0].suggested_correction
+    # The LLM was told about the facts.
+    user_prompt = mock_llm.generate_review_json.call_args.kwargs["user_prompt"]
+    assert "DETERMINISTIC VALIDATION FACTS" in user_prompt and "removed from the library" in user_prompt
+
+
+def test_reviewer_reports_feasibility_issue_for_bad_reference(sample_workflow: WorkflowSchema):
+    wf = sample_workflow.model_copy(deep=True)
+    wf.nodes[2].config["url"] = "https://billing.example.com/{{nodes.n_chek.output.id}}"
+    review = WorkflowReviewer(llm_service=_passing_llm()).review("Process order", wf)
+    assert review.status == ReviewStatus.FAILED
+    issue = next(i for i in review.issues if i.category == "feasibility")
+    assert "n_chek" in issue.description and "Did you mean 'n_check'?" in issue.suggested_correction
+
+
+def test_review_issue_category_is_normalized():
+    issue = ReviewIssue(issue_type="x", severity="low", description="d", category="SECURITY")
+    assert issue.category == "security"
+    assert ReviewIssue(issue_type="x", severity="low", description="d", category="weird").category == "logic"
+    assert ReviewIssue(issue_type="x", severity="low", description="d").category == "logic"

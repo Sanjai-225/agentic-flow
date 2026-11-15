@@ -6,7 +6,8 @@ Mapping rules (deterministic, no LLM):
 - Nodes bound to an external ``tool`` are NOT mapped onto generic executable
   operations (a "trigger" watching Gmail is not a manual trigger); they become
   ``unsupported:<type>`` until an integration provider can run them.
-- Unknown types become ``unsupported:<type>``. They still render and save,
+- Node types removed from the library (``app.registry.legacy``) and unknown
+  types become ``unsupported:<type>``. They still render and save,
   but the planner rejects them before execution.
 - Edges leaving an If node with a legacy ``condition``/``label`` such as
   "true"/"yes" or "false"/"no" get the matching ``source_port``.
@@ -14,10 +15,11 @@ Mapping rules (deterministic, no LLM):
 
 from typing import Optional
 
+from app.registry.legacy import LEGACY_NODE_TYPES, UNSUPPORTED_PREFIX
 from app.registry.node_registry import NodeRegistry, get_default_registry
 from app.schemas.workflow import CANONICAL_SCHEMA_VERSION, WorkflowSchema
 
-UNSUPPORTED_PREFIX = "unsupported:"
+__all__ = ["UNSUPPORTED_PREFIX", "upgrade_workflow"]
 
 _TRUE_WORDS = {"true", "yes", "y", "pass", "passed", "approved", "match", "matched", "then"}
 _FALSE_WORDS = {"false", "no", "n", "else", "otherwise", "fail", "failed", "rejected", "no match"}
@@ -41,6 +43,10 @@ def upgrade_workflow(workflow: WorkflowSchema, registry: Optional[NodeRegistry] 
 
     for node in upgraded.nodes:
         if node.operation:
+            continue
+        if (node.type or "").strip().lower() in LEGACY_NODE_TYPES:
+            # Removed node types are preserved as-is and never remapped to another operation.
+            node.operation = f"{UNSUPPORTED_PREFIX}{node.type}"
             continue
         definition = reg.get(node.type)
         if definition is None:

@@ -3,346 +3,182 @@
 NOTE: This is strictly a development/testing fallback. Every returned workflow is
 clearly marked with '[MOCK DEV MODE]' in its name and description so it is never
 confused with real LLM-generated output.
+
+Every mock workflow uses ONLY executable registry operations (Milestone 2 removed
+design-only node types). External services without a built-in integration
+(email, Slack, payment providers...) are reached through ``http.request`` against
+placeholder ``*.example.com`` endpoints, which the user must replace; the
+description says so explicitly.
 """
 
 import re
 import uuid
+from typing import Any, Dict, List, Optional
 
-from app.schemas.workflow import EdgeSchema, NodeSchema, ToolSchema, WorkflowSchema
+from app.schemas.workflow import EdgeSchema, NodeSchema, WorkflowSchema
+
+_MOCK = "[MOCK DEV MODE]"
+_MOCK_NOTE = (
+    "[MOCK DEV MODE - No GEMINI_API_KEY configured] Template workflow built only from executable operations. "
+    "External services are called through HTTP Request placeholders (*.example.com) that you must replace "
+    "with real endpoints and credentials."
+)
+
+
+def _node(id_: str, type_: str, operation: str, label: str, description: str,
+          config: Dict[str, Any]) -> NodeSchema:
+    return NodeSchema(id=id_, type=type_, operation=operation, label=label, description=description, config=config)
+
+
+def _edge(id_: str, source: str, target: str, port: str = "main") -> EdgeSchema:
+    return EdgeSchema(id=id_, source=source, target=target, source_port=port,
+                      label=port if port in {"true", "false"} else None)
+
+
+def _rule(left: str, operator: str, right: Any = None) -> Dict[str, Any]:
+    rule: Dict[str, Any] = {"left": left, "operator": operator}
+    if right is not None:
+        rule["right"] = right
+    return rule
+
+
+def _if(id_: str, label: str, rules: List[Dict[str, Any]], combinator: str = "all") -> NodeSchema:
+    return _node(id_, "condition", "core.if", label, "Routes to the true or false branch.",
+                 {"conditions": {"combinator": combinator, "rules": rules}})
+
+
+def _http(id_: str, label: str, url: str, body: Optional[Dict[str, Any]] = None, method: str = "POST") -> NodeSchema:
+    config: Dict[str, Any] = {"method": method, "url": url, "timeout_seconds": 15}
+    if body is not None:
+        config.update({"body_type": "json", "body": body})
+    return _node(id_, "api_call", "http.request", label, f"{method} {url} (placeholder endpoint).", config)
+
+
+def _end(id_: str, label: str, output: Any) -> NodeSchema:
+    return _node(id_, "end", "core.end", label, "Returns the final output.", {"output": output})
+
+
+def _set(id_: str, label: str, fields: List[Dict[str, Any]]) -> NodeSchema:
+    return _node(id_, "set_variable", "core.set", label, "Prepares named fields.",
+                 {"fields": fields, "keep_input": False})
+
+
+def _webhook() -> NodeSchema:
+    return _node("webhook_trigger_1", "webhook_trigger", "core.webhook_trigger", "Incoming Request",
+                 "Starts the workflow when a JSON payload is POSTed to the webhook URL.", {"method": "POST"})
+
+
+def _workflow(wf_id: str, name: str, summary: str, nodes: List[NodeSchema], edges: List[EdgeSchema]) -> WorkflowSchema:
+    return WorkflowSchema(workflow_id=wf_id, workflow_name=f"{_MOCK} {name}", description=f"{_MOCK_NOTE} {summary}",
+                          nodes=nodes, edges=edges)
 
 
 def generate_mock_workflow(prompt: str) -> WorkflowSchema:
-    """Generate a valid, domain-appropriate mock workflow for local testing."""
+    """Generate a domain-appropriate, executable mock workflow for local testing."""
     prompt_lower = prompt.lower()
     wf_id = f"mock-{uuid.uuid4().hex[:8]}"
 
     if re.search(r"\b(http|fetch|endpoint|url|api request)\b", prompt_lower):
         return _executable_http_workflow(wf_id)
+    if any(k in prompt_lower for k in ("invoice", "expense", "billing", "payment")):
+        return _invoice_workflow(wf_id)
+    if any(k in prompt_lower for k in ("support", "customer", "ticket", "order")):
+        return _support_workflow(wf_id)
+    if any(k in prompt_lower for k in ("email", "slack", "alert", "notification", "notify")):
+        return _alert_workflow(wf_id)
+    return _generic_workflow(wf_id, prompt)
 
-    if "invoice" in prompt_lower or "expense" in prompt_lower or "billing" in prompt_lower:
-        return WorkflowSchema(
-            workflow_id=wf_id,
-            workflow_name="[MOCK DEV MODE] Automated Invoice Processing & Approval",
-            description=(
-                "[MOCK DEV MODE - No GEMINI_API_KEY configured] Automatically extracts invoice data, "
-                "verifies line items against ERP, routes for manager approval if over threshold, "
-                "and schedules payment."
-            ),
-            nodes=[
-                NodeSchema(
-                    id="node_invoice_trigger",
-                    type="trigger",
-                    label="Invoice Email Received",
-                    description="Monitors accounts-payable inbox for incoming vendor invoices.",
-                    config={"mailbox": "ap@company.com", "filter": "has:attachment .pdf"},
-                    tool=ToolSchema(name="Gmail", operation="watch_inbox", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_extract_data",
-                    type="document_extraction",
-                    label="Extract Invoice Data",
-                    description="Extracts vendor details, amount, PO number, and line items from PDF.",
-                    config={"extraction_format": "json", "confidence_threshold": 0.95},
-                    tool=ToolSchema(name="DocumentAI", operation="parse_invoice", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_validate_po",
-                    type="database_lookup",
-                    label="Verify PO in ERP",
-                    description="Validates PO number and matching line items in the ERP system.",
-                    config={"erp_table": "purchase_orders", "match_tolerance": 0.01},
-                    tool=ToolSchema(name="PostgreSQL", operation="query_po", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_threshold_check",
-                    type="condition",
-                    label="Amount > $5,000?",
-                    description="Checks if total invoice amount exceeds auto-approval threshold.",
-                    config={"threshold": 5000, "currency": "USD"},
-                ),
-                NodeSchema(
-                    id="node_manual_approval",
-                    type="approval",
-                    label="Request Manager Approval",
-                    description="Sends approval request to finance manager with invoice summary.",
-                    config={"channel": "#finance-approvals", "timeout_hours": 24},
-                    tool=ToolSchema(name="Slack", operation="send_approval_card", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_schedule_payment",
-                    type="payment_execution",
-                    label="Schedule Payment",
-                    description="Submits approved invoice to payment gateway for scheduled batch payout.",
-                    config={"payment_method": "ACH", "terms": "Net-30"},
-                    tool=ToolSchema(name="Stripe", operation="create_payout", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_notify_vendor",
-                    type="notification",
-                    label="Notify Vendor",
-                    description="Sends confirmation email to vendor with payment schedule.",
-                    config={"template": "payment_scheduled_v2"},
-                    tool=ToolSchema(name="SendGrid", operation="send_email", status="not_connected"),
-                ),
-            ],
-            edges=[
-                EdgeSchema(id="e1", source="node_invoice_trigger", target="node_extract_data"),
-                EdgeSchema(id="e2", source="node_extract_data", target="node_validate_po"),
-                EdgeSchema(id="e3", source="node_validate_po", target="node_threshold_check"),
-                EdgeSchema(
-                    id="e4_high",
-                    source="node_threshold_check",
-                    target="node_manual_approval",
-                    label="Yes (> $5k)",
-                    condition="amount > 5000",
-                ),
-                EdgeSchema(
-                    id="e4_low",
-                    source="node_threshold_check",
-                    target="node_schedule_payment",
-                    label="No (<= $5k Auto)",
-                    condition="amount <= 5000",
-                ),
-                EdgeSchema(id="e5", source="node_manual_approval", target="node_schedule_payment", label="Approved"),
-                EdgeSchema(id="e6", source="node_schedule_payment", target="node_notify_vendor"),
-            ],
-            start_nodes=["node_invoice_trigger"],
-            end_nodes=["node_notify_vendor"],
-        )
 
-    if "research" in prompt_lower or "search" in prompt_lower or "gather" in prompt_lower:
-        return WorkflowSchema(
-            workflow_id=wf_id,
-            workflow_name="[MOCK DEV MODE] Automated Market & Web Research Pipeline",
-            description=(
-                "[MOCK DEV MODE - No GEMINI_API_KEY configured] Executes search queries across web sources, "
-                "scrapes and synthesizes findings, runs LLM analysis, and publishes a structured research brief."
-            ),
-            nodes=[
-                NodeSchema(
-                    id="node_topic_input",
-                    type="trigger",
-                    label="Research Topic Trigger",
-                    description="Receives research query or scheduled research brief topic.",
-                    config={"source": "api_trigger"},
-                ),
-                NodeSchema(
-                    id="node_web_search",
-                    type="search",
-                    label="Search Web & Academic Sources",
-                    description="Gathers top 10 relevant articles and news sources for the topic.",
-                    config={"max_results": 10, "recency": "past_month"},
-                    tool=ToolSchema(name="GoogleSearch", operation="search", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_scrape_articles",
-                    type="data_extraction",
-                    label="Extract Article Text",
-                    description="Extracts main text and removes ads and boilerplate from target URLs.",
-                    config={"extract_metadata": True},
-                    tool=ToolSchema(name="WebScraper", operation="extract_content", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_llm_synthesize",
-                    type="llm_agent",
-                    label="Synthesize Insights (LLM)",
-                    description="Analyzes key trends, quotes, pros/cons, and executive takeaways.",
-                    config={"model": "gemini-2.5-flash", "temperature": 0.2},
-                ),
-                NodeSchema(
-                    id="node_format_report",
-                    type="transform",
-                    label="Format Markdown Report",
-                    description="Generates executive PDF and Markdown formatted document.",
-                    config={"format": "markdown_and_pdf"},
-                ),
-                NodeSchema(
-                    id="node_publish_notion",
-                    type="output",
-                    label="Publish to Notion & Slack",
-                    description="Saves research dossier to knowledge base and alerts team on Slack.",
-                    config={"notion_database": "Research Briefs", "slack_channel": "#market-insights"},
-                    tool=ToolSchema(name="Notion", operation="create_page", status="not_connected"),
-                ),
-            ],
-            edges=[
-                EdgeSchema(id="e1", source="node_topic_input", target="node_web_search"),
-                EdgeSchema(id="e2", source="node_web_search", target="node_scrape_articles"),
-                EdgeSchema(id="e3", source="node_scrape_articles", target="node_llm_synthesize"),
-                EdgeSchema(id="e4", source="node_llm_synthesize", target="node_format_report"),
-                EdgeSchema(id="e5", source="node_format_report", target="node_publish_notion"),
-            ],
-            start_nodes=["node_topic_input"],
-            end_nodes=["node_publish_notion"],
-        )
-
-    if "slack" in prompt_lower or "notification" in prompt_lower or "alert" in prompt_lower:
-        return WorkflowSchema(
-            workflow_id=wf_id,
-            workflow_name="[MOCK DEV MODE] Email Triage with Slack Escalation",
-            description=(
-                "[MOCK DEV MODE - No GEMINI_API_KEY configured] Triages inbound emails, "
-                "classifies priority with LLM, alerts team on Slack for urgent issues, "
-                "and creates a tracker ticket."
-            ),
-            nodes=[
-                NodeSchema(
-                    id="node_email_ingress",
-                    type="trigger",
-                    label="Inbound Email",
-                    description="Ingests incoming customer or team email messages.",
-                    config={"inbox": "support@company.com"},
-                    tool=ToolSchema(name="Gmail", operation="receive_message", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_classify_priority",
-                    type="llm_agent",
-                    label="Classify Priority (LLM)",
-                    description="Evaluates sentiment, urgency, and customer SLA tier.",
-                    config={"categories": ["P0-Urgent", "P1-High", "P2-Standard"]},
-                ),
-                NodeSchema(
-                    id="node_priority_branch",
-                    type="condition",
-                    label="Is Urgent (P0/P1)?",
-                    description="Routes high-urgency issues to real-time alerting.",
-                    config={"condition_field": "priority"},
-                ),
-                NodeSchema(
-                    id="node_slack_alert",
-                    type="notification",
-                    label="Send Slack Escalation",
-                    description="Posts urgent alert with mention in on-call channel.",
-                    config={"channel": "#support-oncall", "mention": "@oncall"},
-                    tool=ToolSchema(name="Slack", operation="post_message", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_create_jira",
-                    type="ticketing",
-                    label="Create Jira Ticket",
-                    description="Creates issue in engineering or support queue.",
-                    config={"project": "SUP", "issue_type": "Task"},
-                    tool=ToolSchema(name="Jira", operation="create_issue", status="not_connected"),
-                ),
-                NodeSchema(
-                    id="node_auto_ack",
-                    type="notification",
-                    label="Send Auto-Acknowledgement",
-                    description="Sends acknowledgement email with ticket link to customer.",
-                    config={"template": "ticket_created_ack"},
-                    tool=ToolSchema(name="Gmail", operation="send_reply", status="not_connected"),
-                ),
-            ],
-            edges=[
-                EdgeSchema(id="e1", source="node_email_ingress", target="node_classify_priority"),
-                EdgeSchema(id="e2", source="node_classify_priority", target="node_priority_branch"),
-                EdgeSchema(
-                    id="e3_urgent",
-                    source="node_priority_branch",
-                    target="node_slack_alert",
-                    label="Yes (Urgent)",
-                    condition="priority in ['P0', 'P1']",
-                ),
-                EdgeSchema(
-                    id="e3_normal",
-                    source="node_priority_branch",
-                    target="node_create_jira",
-                    label="No (Standard)",
-                    condition="priority == 'P2'",
-                ),
-                EdgeSchema(id="e4", source="node_slack_alert", target="node_create_jira"),
-                EdgeSchema(id="e5", source="node_create_jira", target="node_auto_ack"),
-            ],
-            start_nodes=["node_email_ingress"],
-            end_nodes=["node_auto_ack"],
-        )
-
-    # Default fallback: Customer Support & Order Verification workflow (the prompt's canonical example)
-    return WorkflowSchema(
-        workflow_id=wf_id,
-        workflow_name="[MOCK DEV MODE] Customer Support Email & Order Verification Flow",
-        description=(
-            "[MOCK DEV MODE - No GEMINI_API_KEY configured] Receives customer emails, identifies the issue, "
-            "checks order status from database, generates an AI response, and emails customer."
-        ),
-        nodes=[
-            NodeSchema(
-                id="node_receive_email",
-                type="trigger",
-                label="Receive Customer Email",
-                description="Listens for inbound support emails on support@company.com.",
-                config={"inbox": "support@company.com", "polling_interval_sec": 30},
-                tool=ToolSchema(name="Gmail", operation="receive", status="not_connected"),
-            ),
-            NodeSchema(
-                id="node_classify_issue",
-                type="llm_agent",
-                label="Identify Issue & Intent",
-                description="Uses LLM to categorize inquiry (order inquiry, return, complaint) and extract order ID.",
-                config={"model": "gemini-2.5-flash", "extract_entities": ["order_id", "issue_type"]},
-            ),
-            NodeSchema(
-                id="node_check_order_db",
-                type="database_query",
-                label="Query Order Database",
-                description="Looks up customer order status, tracking number, and delivery date.",
-                config={"table": "orders", "key": "order_id"},
-                tool=ToolSchema(name="PostgreSQL", operation="lookup_order", status="not_connected"),
-            ),
-            NodeSchema(
-                id="node_evaluate_status",
-                type="condition",
-                label="Order Found?",
-                description="Checks if order record exists and retrieves delivery state.",
-                config={"condition": "order != null"},
-            ),
-            NodeSchema(
-                id="node_generate_response",
-                type="llm_agent",
-                label="Generate Response with LLM",
-                description="Drafts a personalized, empathetic response incorporating live order status.",
-                config={"model": "gemini-2.5-flash", "tone": "helpful_and_professional"},
-            ),
-            NodeSchema(
-                id="node_escalate_human",
-                type="notification",
-                label="Escalate to Human Agent",
-                description="Routes ticket to human support rep if order cannot be resolved automatically.",
-                config={"queue": "tier_2_support"},
-                tool=ToolSchema(name="Zendesk", operation="create_ticket", status="not_connected"),
-            ),
-            NodeSchema(
-                id="node_send_email",
-                type="output",
-                label="Send Response to Customer",
-                description="Dispatches the generated response email to customer address.",
-                config={"from_address": "support@company.com"},
-                tool=ToolSchema(name="Gmail", operation="send_email", status="not_connected"),
-            ),
+def _invoice_workflow(wf_id: str) -> WorkflowSchema:
+    return _workflow(
+        wf_id, "Invoice Approval Routing",
+        "Receives an invoice as JSON, requests approval for amounts above 5000 and otherwise schedules payment.",
+        [
+            _webhook(),
+            _set("set_1", "Normalize Invoice", [
+                {"name": "vendor", "value": "{{trigger.body.vendor}}", "type": "string"},
+                {"name": "amount", "value": "{{trigger.body.amount}}", "type": "number"},
+                {"name": "invoice_id", "value": "{{trigger.body.invoice_id}}", "type": "string"},
+            ]),
+            _if("if_1", "Amount > 5000?", [_rule("{{nodes.set_1.output.amount}}", "gt", 5000)]),
+            _http("http_1", "Request Manager Approval", "https://approvals.example.com/requests",
+                  {"invoice_id": "{{nodes.set_1.output.invoice_id}}", "amount": "{{nodes.set_1.output.amount}}"}),
+            _http("http_2", "Schedule Payment", "https://payments.example.com/payouts",
+                  {"vendor": "{{nodes.set_1.output.vendor}}", "amount": "{{nodes.set_1.output.amount}}"}),
+            _end("end_1", "Approval Requested", {"route": "approval", "status": "{{nodes.http_1.output.status_code}}"}),
+            _end("end_2", "Payment Scheduled", {"route": "payment", "status": "{{nodes.http_2.output.status_code}}"}),
         ],
-        edges=[
-            EdgeSchema(id="edge_1", source="node_receive_email", target="node_classify_issue"),
-            EdgeSchema(id="edge_2", source="node_classify_issue", target="node_check_order_db"),
-            EdgeSchema(id="edge_3", source="node_check_order_db", target="node_evaluate_status"),
-            EdgeSchema(
-                id="edge_4_found",
-                source="node_evaluate_status",
-                target="node_generate_response",
-                label="Order Found",
-                condition="order.status != null",
-            ),
-            EdgeSchema(
-                id="edge_4_not_found",
-                source="node_evaluate_status",
-                target="node_escalate_human",
-                label="Order Missing",
-                condition="order.status == null",
-            ),
-            EdgeSchema(id="edge_5", source="node_generate_response", target="node_send_email"),
-            EdgeSchema(id="edge_6", source="node_escalate_human", target="node_send_email", label="Escalation Ack"),
+        [_edge("e1", "webhook_trigger_1", "set_1"), _edge("e2", "set_1", "if_1"),
+         _edge("e3", "if_1", "http_1", "true"), _edge("e4", "http_1", "end_1"),
+         _edge("e5", "if_1", "http_2", "false"), _edge("e6", "http_2", "end_2")],
+    )
+
+
+def _support_workflow(wf_id: str) -> WorkflowSchema:
+    return _workflow(
+        wf_id, "Customer Support Triage",
+        "Receives a support message, escalates urgent ones and acknowledges the rest.",
+        [
+            _webhook(),
+            _set("set_1", "Extract Message", [
+                {"name": "email", "value": "{{trigger.body.email}}", "type": "string"},
+                {"name": "message", "value": "{{trigger.body.message}}", "type": "string"},
+            ]),
+            _if("if_1", "Urgent?", [_rule("{{nodes.set_1.output.message}}", "contains", "urgent"),
+                                    _rule("{{nodes.set_1.output.message}}", "contains", "refund")], "any"),
+            _http("http_1", "Escalate to On-Call", "https://helpdesk.example.com/escalations",
+                  {"email": "{{nodes.set_1.output.email}}", "message": "{{nodes.set_1.output.message}}"}),
+            _http("http_2", "Send Acknowledgement", "https://mail.example.com/send",
+                  {"to": "{{nodes.set_1.output.email}}", "template": "ack"}),
+            _end("end_1", "Escalated", {"escalated": True}),
+            _end("end_2", "Acknowledged", {"escalated": False}),
         ],
-        start_nodes=["node_receive_email"],
-        end_nodes=["node_send_email"],
+        [_edge("e1", "webhook_trigger_1", "set_1"), _edge("e2", "set_1", "if_1"),
+         _edge("e3", "if_1", "http_1", "true"), _edge("e4", "http_1", "end_1"),
+         _edge("e5", "if_1", "http_2", "false"), _edge("e6", "http_2", "end_2")],
+    )
+
+
+def _alert_workflow(wf_id: str) -> WorkflowSchema:
+    return _workflow(
+        wf_id, "Critical Alert Notification",
+        "Receives alert events, keeps the critical ones and posts them to a chat webhook.",
+        [
+            _webhook(),
+            _node("filter_1", "filter", "core.filter", "Keep Critical Alerts", "Keeps alerts with severity 'critical'.",
+                  {"items": "{{trigger.body.alerts}}",
+                   "conditions": {"combinator": "all", "rules": [_rule("{{item.severity}}", "eq", "critical")]}}),
+            _if("if_1", "Any Critical?", [_rule("{{nodes.filter_1.output.kept}}", "gt", 0)]),
+            _http("http_1", "Post to Chat Webhook", "https://chat.example.com/webhook",
+                  {"text": "Critical alerts: {{nodes.filter_1.output.kept}}", "alerts": "{{nodes.filter_1.output.items}}"}),
+            _end("end_1", "Notified", {"notified": True, "count": "{{nodes.filter_1.output.kept}}"}),
+            _end("end_2", "Nothing Critical", {"notified": False}),
+        ],
+        [_edge("e1", "webhook_trigger_1", "filter_1"), _edge("e2", "filter_1", "if_1"),
+         _edge("e3", "if_1", "http_1", "true"), _edge("e4", "http_1", "end_1"),
+         _edge("e5", "if_1", "end_2", "false")],
+    )
+
+
+def _generic_workflow(wf_id: str, prompt: str) -> WorkflowSchema:
+    return _workflow(
+        wf_id, "Data Processing Pipeline",
+        f"Generic template for: {prompt[:120]}",
+        [
+            _node("manual_trigger_1", "manual_trigger", "core.manual_trigger", "Start Manually",
+                  "Run payload: {\"items\": [...], \"title\": string}.",
+                  {"sample_payload": {"title": "Report", "items": [{"name": "a", "value": 1}]}}),
+            _set("set_1", "Prepare Fields", [
+                {"name": "title", "value": "{{trigger.title}}", "type": "string"},
+                {"name": "items", "value": "{{trigger.items}}", "type": "array"},
+            ]),
+            _node("transform_1", "data_transform", "core.transform", "Build Result", "Maps the prepared fields.",
+                  {"mappings": {"report.title": "{{nodes.set_1.output.title}}",
+                                "report.items": "{{nodes.set_1.output.items}}"}}),
+            _end("end_1", "Return Result", "{{nodes.transform_1.output.report}}"),
+        ],
+        [_edge("e1", "manual_trigger_1", "set_1"), _edge("e2", "set_1", "transform_1"),
+         _edge("e3", "transform_1", "end_1")],
     )
 
 

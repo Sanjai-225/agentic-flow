@@ -44,11 +44,26 @@ class ReviewIssue(BaseModel):
         ),
     )
     severity: str = Field(..., description="high, medium, or low.")
+    category: str = Field(
+        default="logic",
+        description="Which dimension the issue belongs to: logic (does it meet the requirement), schema "
+                    "(config/JSON validity), capability (operation not registered/executable), feasibility "
+                    "(cannot run as wired: references, ports, triggers, credentials), security.",
+    )
     requirement_id: str = Field(default="", description="Related requirement ID if applicable.")
     affected_node_ids: List[str] = Field(default_factory=list)
     affected_edge_ids: List[str] = Field(default_factory=list)
     description: str = Field(..., description="What is wrong.")
     suggested_correction: str = Field(default="", description="How to fix it.")
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalize_category(cls, v: Any) -> str:
+        value = str(v or "logic").strip().lower()
+        return value if value in REVIEW_CATEGORIES else "logic"
+
+
+REVIEW_CATEGORIES = ("logic", "schema", "capability", "feasibility", "security")
 
 
 class WorkflowReview(BaseModel):

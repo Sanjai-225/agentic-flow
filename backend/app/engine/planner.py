@@ -14,8 +14,9 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 from pydantic import ValidationError
 
 from app.core.errors import ErrorCategory, NodeExecutionError, ValidationIssue
-from app.engine.expressions import iter_expressions, parse_expression
+from app.engine.expressions import iter_expressions, parse_expression, unknown_node_suggestion
 from app.executors import get_executor
+from app.registry.legacy import legacy_message, legacy_type_of
 from app.registry.node_registry import NodeRegistry, get_default_registry
 from app.schemas.registry import NodeDefinition
 from app.schemas.workflow import CANONICAL_SCHEMA_VERSION, EdgeSchema, WorkflowSchema
@@ -33,6 +34,9 @@ class ExecutionPlan:
     incoming: Dict[str, List[EdgeSchema]] = field(default_factory=dict)
     outgoing: Dict[str, List[EdgeSchema]] = field(default_factory=dict)
     definitions: Dict[str, NodeDefinition] = field(default_factory=dict)
+    # Loop Over Items: loop node id -> body node ids (topological order); body node id -> owning loop id.
+    loop_bodies: Dict[str, List[str]] = field(default_factory=dict)
+    body_owner: Dict[str, str] = field(default_factory=dict)
 
     @property
     def errors(self) -> List[ValidationIssue]:
@@ -89,14 +93,23 @@ def plan_workflow(
         if not op:
             add(ErrorCategory.UNSUPPORTED_CAPABILITY, f"Node {label} has no operation.", node_id=node.id)
             continue
+        legacy = legacy_type_of(op, node.type)
+        definition = None if op.startswith(UNSUPPORTED_PREFIX) else reg.get_operation(op)
+        if definition is None and legacy:
+            # A node type removed from the library (Milestone 2). Kept as-is, never remapped.
+            message, suggestion = legacy_message(label, legacy)
+            add(ErrorCategory.UNSUPPORTED_CAPABILITY, message, node_id=node.id, suggestion=suggestion)
+            continue
         if op.startswith(UNSUPPORTED_PREFIX):
             add(ErrorCategory.UNSUPPORTED_CAPABILITY,
                 f"Node {label} uses type '{op[len(UNSUPPORTED_PREFIX):]}', which has no executable implementation.",
-                node_id=node.id)
+                node_id=node.id,
+                suggestion="Replace it with an operation from the node library; its stored configuration and "
+                           "connections are kept so you can copy what you need.")
             continue
-        definition = reg.get_operation(op)
         if definition is None:
-            add(ErrorCategory.UNSUPPORTED_CAPABILITY, f"Node {label} uses unknown operation '{op}'.", node_id=node.id)
+            add(ErrorCategory.UNSUPPORTED_CAPABILITY, f"Node {label} uses unknown operation '{op}'.", node_id=node.id,
+                suggestion="Replace it with an operation from the node library.")
             continue
         definitions[node.id] = definition
         if not definition.executable or get_executor(op) is None:
@@ -109,9 +122,13 @@ def plan_workflow(
             except ValidationError as exc:
                 for err in exc.errors():
                     loc = ".".join(str(p) for p in err["loc"]) or None
-                    add(ErrorCategory.SCHEMA_VALIDATION,
-                        f"Node {label}: config field '{loc or 'config'}' {err['msg'].lower()}.",
-                        node_id=node.id, field_=loc)
+                    if err.get("type") == "value_error":
+                        # Our own validator messages are written for users; keep them verbatim.
+                        detail = str(err["msg"]).removeprefix("Value error, ").rstrip(".")
+                        message = f"Node {label}: {detail} (config field '{loc or 'config'}')."
+                    else:
+                        message = f"Node {label}: config field '{loc or 'config'}' {err['msg'].lower()}."
+                    add(ErrorCategory.SCHEMA_VALIDATION, message, node_id=node.id, field_=loc)
 
     # 2. Generic graph topology checks (existing validator).
     graph = GraphValidator.validate(workflow)
@@ -141,19 +158,34 @@ def plan_workflow(
             add(ErrorCategory.GRAPH_VALIDATION, "Trigger nodes cannot have incoming connections.",
                 node_id=nid, edge_id=edge.id)
 
-    # 4. Port validity.
+    # 4. Port validity (ports may be derived from the node config, e.g. Switch cases, Merge inputs).
+    node_by_id = {n.id: n for n in workflow.nodes}
+    ports: Dict[str, tuple[List[str], List[str]]] = {
+        nid: d.ports_for(node_by_id[nid].config) for nid, d in definitions.items()}
     for edge in workflow.edges:
         src, tgt = definitions.get(edge.source), definitions.get(edge.target)
-        if src is not None and edge.source_port not in src.ports_out:
-            allowed = ", ".join(src.ports_out) or "none"
+        src_out = ports[edge.source][1] if src is not None else []
+        tgt_in = ports[edge.target][0] if tgt is not None else []
+        if src is not None and edge.source_port not in src_out:
+            allowed = ", ".join(src_out) or "none"
             add(ErrorCategory.GRAPH_VALIDATION,
                 f"Connection '{edge.id}' leaves '{edge.source}' from port '{edge.source_port}', "
                 f"but that node only has output ports: {allowed}.", edge_id=edge.id, node_id=edge.source,
                 suggestion="Reconnect the edge from one of the node's output handles.")
-        if tgt is not None and not tgt.is_trigger and edge.target_port not in tgt.ports_in:
+        if tgt is not None and not tgt.is_trigger and edge.target_port not in tgt_in:
             add(ErrorCategory.GRAPH_VALIDATION,
-                f"Connection '{edge.id}' enters '{edge.target}' on unknown port '{edge.target_port}'.",
+                f"Connection '{edge.id}' enters '{edge.target}' on unknown port '{edge.target_port}'. "
+                f"Input ports: {', '.join(tgt_in) or 'none'}.",
                 edge_id=edge.id, node_id=edge.target)
+    for nid, definition in definitions.items():
+        spec = definition.dynamic_ports
+        if spec is not None and spec.direction == "in":
+            connected = {e.target_port for e in incoming.get(nid, [])}
+            for port in ports[nid][0]:
+                if port not in connected:
+                    add(ErrorCategory.GRAPH_VALIDATION,
+                        f"Input '{port}' of '{node_by_id[nid].label}' ({nid}) is not connected.", node_id=nid,
+                        suggestion="Connect a branch to every input, or reduce the number of inputs.")
 
     # 5. Cycles and topological order (stable: canonical node order breaks ties).
     indegree = {nid: 0 for nid in node_ids}
@@ -186,6 +218,48 @@ def plan_workflow(
                 add(ErrorCategory.GRAPH_VALIDATION, f"Node '{nid}' is not reachable from the trigger.", node_id=nid,
                     suggestion="Connect this node to the trigger path or delete it.")
 
+    # 6b. Loop Over Items bodies: nodes reachable from a loop's 'item' port run once per item.
+    loop_bodies: Dict[str, List[str]] = {}
+    body_owner: Dict[str, str] = {}
+    position = {nid: i for i, nid in enumerate(order)}
+    for loop_id in [nid for nid in order if definitions.get(nid) and definitions[nid].operation_id == "core.loop"]:
+        body: Set[str] = set()
+        stack = [e.target for e in outgoing.get(loop_id, []) if e.source_port == "item"]
+        while stack:
+            current = stack.pop()
+            if current in body or current == loop_id:
+                continue
+            body.add(current)
+            stack.extend(e.target for e in outgoing.get(current, []))
+        loop_label = f"'{node_by_id[loop_id].label}' ({loop_id})"
+        for nid in sorted(body, key=lambda n: position.get(n, 0)):
+            d = definitions.get(nid)
+            if nid in body_owner:
+                add(ErrorCategory.GRAPH_VALIDATION, f"Node '{nid}' is inside more than one loop body.", node_id=nid)
+            if d is not None and (d.is_trigger or d.operation_id in {"core.end", "core.loop"}):
+                kind = "nested loops are not supported" if d.operation_id == "core.loop" else \
+                    f"'{d.label}' nodes cannot run inside a loop body"
+                add(ErrorCategory.GRAPH_VALIDATION, f"Node '{nid}' is in the body of loop {loop_label}: {kind}.",
+                    node_id=nid, suggestion="Connect it after the loop's 'done' output instead.")
+            for e in incoming.get(nid, []):
+                if e.source not in body and e.source != loop_id:
+                    add(ErrorCategory.GRAPH_VALIDATION,
+                        f"Node '{nid}' in the body of loop {loop_label} also receives a connection from "
+                        f"'{e.source}' outside the loop.", node_id=nid, edge_id=e.id,
+                        suggestion="Feed loop-body nodes only from the loop's 'item' output or other body nodes; "
+                                   "reference outside data with {{nodes.<id>.output...}}.")
+                elif e.source == loop_id and e.source_port != "item":
+                    add(ErrorCategory.GRAPH_VALIDATION,
+                        f"Node '{nid}' is reachable from both the 'item' and 'done' outputs of loop {loop_label}.",
+                        node_id=nid, edge_id=e.id)
+        for e in outgoing.get(loop_id, []):
+            if e.source_port == "done" and e.target in body:
+                add(ErrorCategory.GRAPH_VALIDATION,
+                    f"The 'done' output of loop {loop_label} leads into its own body ('{e.target}').", edge_id=e.id)
+        loop_bodies[loop_id] = [nid for nid in order if nid in body]
+        for nid in body:
+            body_owner.setdefault(nid, loop_id)
+
     # 7. Static expression references.
     for node in workflow.nodes:
         definition = definitions.get(node.id)
@@ -199,17 +273,32 @@ def plan_workflow(
                         field_=f"{source_name}.{field_path}" if source_name == "inputs" else field_path)
                     continue
                 top = field_path.split(".")[0].split("[")[0]
-                if expr.root == "item" and not (source_name == "config" and top in lazy):
+                in_body = node.id in body_owner
+                if expr.root == "item" and not in_body and not (source_name == "config" and top in lazy):
                     add(ErrorCategory.INVALID_MAPPING,
-                        f"'{{{{{raw.strip()}}}}}' uses 'item', which is only available inside Filter rules.",
+                        f"'{{{{{raw.strip()}}}}}' uses 'item', which is only available inside Filter rules and "
+                        "inside a Loop Over Items body.",
                         node_id=node.id, field_=field_path)
+                if expr.root == "loop" and not in_body:
+                    add(ErrorCategory.INVALID_MAPPING,
+                        f"'{{{{{raw.strip()}}}}}' uses 'loop', which is only available inside a Loop Over Items "
+                        "body.", node_id=node.id, field_=field_path)
                 ref = expr.node_id
                 if ref is None:
                     continue
+                if ref in body_owner and body_owner.get(node.id) != body_owner[ref]:
+                    loop_id = body_owner[ref]
+                    add(ErrorCategory.INVALID_MAPPING,
+                        f"'{{{{{raw.strip()}}}}}' references '{ref}', which runs once per item inside loop "
+                        f"'{loop_id}'.", node_id=node.id, field_=field_path,
+                        suggestion=f"Use the collected results instead: {{{{nodes.{loop_id}.output.results}}}}.")
+                    continue
                 if ref not in index:
+                    upstream = ancestors.get(node.id) or set(index) - {node.id}
                     add(ErrorCategory.INVALID_MAPPING,
                         f"'{{{{{raw.strip()}}}}}' references node '{ref}', which does not exist.",
-                        node_id=node.id, field_=field_path)
+                        node_id=node.id, field_=field_path,
+                        suggestion=unknown_node_suggestion(ref, upstream))
                 elif ref not in ancestors.get(node.id, set()):
                     add(ErrorCategory.INVALID_MAPPING,
                         f"'{{{{{raw.strip()}}}}}' references node '{ref}', which does not run before '{node.id}'.",
@@ -244,4 +333,6 @@ def plan_workflow(
         incoming=dict(incoming),
         outgoing=dict(outgoing),
         definitions=definitions,
+        loop_bodies=loop_bodies,
+        body_owner=body_owner,
     )

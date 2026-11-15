@@ -9,6 +9,13 @@ output and older registry consumers keep working.
 from typing import List
 
 from app.registry.examples import EXAMPLE_CONFIGS
+from app.registry.output_hooks import (
+    infer_end,
+    infer_manual_trigger,
+    infer_passthrough,
+    infer_set,
+    infer_transform,
+)
 from app.registry.configs import (
     EndConfig,
     FilterConfig,
@@ -40,7 +47,10 @@ def _out(id_: str, name: str, dt: PortDataType = PortDataType.ANY, desc: str = "
 
 
 def executable_definitions() -> List[NodeDefinition]:
-    definitions = _executable_definitions()
+    from app.registry.ai_nodes import ai_definitions
+    from app.registry.flow_nodes import flow_definitions
+
+    definitions = _executable_definitions() + ai_definitions() + flow_definitions()
     for d in definitions:
         d.example_config = EXAMPLE_CONFIGS.get(d.operation_id, d.default_config)
     return definitions
@@ -67,6 +77,8 @@ def _executable_definitions() -> List[NodeDefinition]:
             ports_in=[],
             ports_out=["main"],
             config_model=ManualTriggerConfig,
+            id_prefix="manual_trigger",
+            infer_output=infer_manual_trigger,
             ui_fields=[
                 ConfigField(key="sample_payload", label="Default run payload", widget="json",
                             help="Pre-filled JSON for the Run dialog."),
@@ -94,6 +106,7 @@ def _executable_definitions() -> List[NodeDefinition]:
             ports_in=[],
             ports_out=["main"],
             config_model=WebhookTriggerConfig,
+            id_prefix="webhook_trigger",
             ui_fields=[
                 ConfigField(key="method", label="HTTP method", widget="select", options=["POST", "GET", "PUT"]),
             ],
@@ -113,12 +126,14 @@ def _executable_definitions() -> List[NodeDefinition]:
             description="Creates or overwrites named fields using literals or references to upstream data.",
             inputs=[_in("in_data", "Input", PortDataType.OBJECT)],
             outputs=[_out("out_data", "Fields", PortDataType.OBJECT)],
-            default_config={"fields": [{"name": "field", "value": "", "type": "auto"}], "keep_input": False},
+            default_config={"fields": [], "keep_input": False},
             icon="pencil",
             tags=["data", "set", "variable", "fields", "assign"],
             executable=True,
             status="ready",
             config_model=SetConfig,
+            id_prefix="set",
+            infer_output=infer_set,
             ui_fields=[
                 ConfigField(key="fields", label="Fields", widget="set_fields", supports_expressions=True),
                 ConfigField(key="keep_input", label="Include upstream data", widget="boolean"),
@@ -140,6 +155,7 @@ def _executable_definitions() -> List[NodeDefinition]:
             executable=True,
             status="ready",
             config_model=JsonParseConfig,
+            id_prefix="json_parse",
             ui_fields=[
                 ConfigField(key="source", label="JSON source", widget="expression", required=True,
                             supports_expressions=True, placeholder="{{nodes.http_1.output.body}}"),
@@ -164,6 +180,7 @@ def _executable_definitions() -> List[NodeDefinition]:
             executable=True,
             status="ready",
             config_model=FilterConfig,
+            id_prefix="filter",
             lazy_config_fields=["conditions"],
             ui_fields=[
                 ConfigField(key="items", label="Items (array)", widget="expression", required=True,
@@ -189,9 +206,13 @@ def _executable_definitions() -> List[NodeDefinition]:
             executable=True,
             status="ready",
             config_model=TransformConfig,
+            id_prefix="transform",
+            infer_output=infer_transform,
             ui_fields=[
-                ConfigField(key="mappings", label="Mappings (target path → value)", widget="keyvalue",
-                            supports_expressions=True),
+                ConfigField(key="mappings", label="Mappings (target path → value)", widget="keyvalue_json",
+                            supports_expressions=True,
+                            help="Values may be JSON (objects, arrays, numbers) or references. A value that is "
+                                 "exactly one {{reference}} keeps its original type."),
             ],
             output_schema={"type": "object"},
         ),
@@ -215,6 +236,8 @@ def _executable_definitions() -> List[NodeDefinition]:
             status="ready",
             ports_out=["true", "false"],
             config_model=IfConfig,
+            id_prefix="if",
+            infer_output=infer_passthrough,
             ui_fields=[
                 ConfigField(key="conditions", label="Conditions", widget="conditions", supports_expressions=True),
             ],
@@ -237,9 +260,12 @@ def _executable_definitions() -> List[NodeDefinition]:
             status="ready",
             ports_out=[],
             config_model=EndConfig,
+            id_prefix="end",
+            infer_output=infer_end,
             ui_fields=[
-                ConfigField(key="output", label="Final output", widget="expression", supports_expressions=True,
-                            help="Leave empty to return the upstream node's output."),
+                ConfigField(key="output", label="Final output", widget="json_template", supports_expressions=True,
+                            help="Leave empty to return the upstream node's output. JSON with {{references}}: a "
+                                 "value that is exactly one reference keeps its type (number, object, array)."),
             ],
             output_schema={"description": "The final workflow output."},
         ),
@@ -262,6 +288,7 @@ def _executable_definitions() -> List[NodeDefinition]:
             executable=True,
             status="ready",
             config_model=HttpRequestConfig,
+            id_prefix="http",
             credentials=["http_bearer", "http_basic", "http_header"],
             side_effects=True,  # refined per request method by the executor
             idempotent=False,
@@ -275,8 +302,9 @@ def _executable_definitions() -> List[NodeDefinition]:
                 ConfigField(key="query", label="Query parameters", widget="keyvalue", supports_expressions=True),
                 ConfigField(key="headers", label="Headers", widget="keyvalue", supports_expressions=True),
                 ConfigField(key="body_type", label="Body type", widget="select", options=["none", "json", "form", "raw"]),
-                ConfigField(key="body", label="Body", widget="json", supports_expressions=True,
-                            show_if={"body_type": ["json", "form", "raw"]}),
+                ConfigField(key="body", label="Body", widget="json_template", supports_expressions=True,
+                            show_if={"body_type": ["json", "form", "raw"]},
+                            help="A value that is exactly one {{reference}} keeps its original type."),
                 ConfigField(key="auth.type", label="Authentication", widget="select",
                             options=["none", "bearer", "basic", "header"]),
                 ConfigField(key="auth.credential_id", label="Credential", widget="credential",
@@ -292,51 +320,5 @@ def _executable_definitions() -> List[NodeDefinition]:
                 "properties": {"status_code": {"type": "integer"}, "headers": {"type": "object"}, "body": {},
                                "url": {"type": "string"}, "elapsed_ms": {"type": "number"}},
             },
-        ),
-    ]
-
-
-def planned_definitions() -> List[NodeDefinition]:
-    """Control-flow/data nodes whose runtime semantics are NOT implemented yet (design-only)."""
-    return [
-        NodeDefinition(
-            node_type="merge",
-            label="Merge",
-            category=NodeCategory.DATA_PROCESSING,
-            description="Combines data from multiple branches. Design-only until the engine supports merge semantics.",
-            inputs=[_in("in_a", "Input A"), _in("in_b", "Input B")],
-            outputs=[_out("out_merged", "Merged")],
-            icon="merge",
-            tags=["data", "merge", "combine", "planned"],
-        ),
-        NodeDefinition(
-            node_type="wait",
-            label="Wait",
-            category=NodeCategory.LOGIC,
-            description="Pauses execution for a duration or until an event. Design-only until durable waits exist.",
-            inputs=[_in("in_data", "Input")],
-            outputs=[_out("out_data", "Output")],
-            icon="hourglass",
-            tags=["logic", "wait", "delay", "planned"],
-        ),
-        NodeDefinition(
-            node_type="parallel_branch",
-            label="Parallel Branch",
-            category=NodeCategory.LOGIC,
-            description="Runs branches concurrently. Design-only until parallel scheduling exists.",
-            inputs=[_in("in_data", "Input")],
-            outputs=[_out("out_data", "Branches")],
-            icon="split",
-            tags=["logic", "parallel", "planned"],
-        ),
-        NodeDefinition(
-            node_type="join",
-            label="Join",
-            category=NodeCategory.LOGIC,
-            description="Waits for parallel branches to finish. Design-only until parallel scheduling exists.",
-            inputs=[_in("in_branches", "Branches")],
-            outputs=[_out("out_data", "Joined")],
-            icon="git-merge",
-            tags=["logic", "join", "planned"],
         ),
     ]

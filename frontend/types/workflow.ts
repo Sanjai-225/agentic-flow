@@ -92,7 +92,19 @@ export type ErrorCategory =
   | 'RATE_LIMIT'
   | 'NODE_EXECUTION'
   | 'ENGINE_ERROR'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'MODEL_UNAVAILABLE'
+  | 'MODEL_AUTH'
+  | 'MODEL_TIMEOUT'
+  | 'UNSUPPORTED_MODEL'
+  | 'INVALID_MODEL_OUTPUT'
+  | 'STRUCTURED_OUTPUT_INVALID'
+  | 'TOOL_NOT_ALLOWED'
+  | 'TOOL_ARGS_INVALID'
+  | 'TOOL_FAILED'
+  | 'TOOL_TIMEOUT'
+  | 'ITERATION_LIMIT'
+  | 'USAGE_LIMIT';
 
 export interface ValidationIssue {
   category: ErrorCategory;
@@ -150,7 +162,15 @@ export type ConfigWidget =
   | 'keyvalue'
   | 'conditions'
   | 'set_fields'
-  | 'credential';
+  | 'credential'
+  | 'json_template'
+  | 'keyvalue_json'
+  | 'model_select'
+  | 'tool_select'
+  | 'json_schema'
+  | 'form_fields'
+  | 'schedule'
+  | 'switch_cases';
 
 export interface ConfigField {
   key: string;
@@ -191,6 +211,38 @@ export interface NodeDefinition {
   idempotent: boolean;
   default_retry: RetryPolicy;
   default_timeout_seconds: number;
+  /** Prefix for predictable node ids (<id_prefix>_<n>, e.g. set_1). */
+  id_prefix?: string | null;
+  /** Ports derived from the node config (Switch cases, Merge inputs); mirrors the backend planner. */
+  dynamic_ports?: DynamicPorts | null;
+  ai_guidance?: string | null;
+}
+
+export interface DynamicPorts {
+  direction: 'in' | 'out';
+  source: 'list' | 'count';
+  config_key: string;
+  key_field?: string | null;
+  prefix?: string | null;
+  fixed: string[];
+  min_count: number;
+  max_count: number;
+}
+
+/** Static output-field hints (POST /api/workflows/output-fields); real run outputs take precedence. */
+export interface InferredOutputFields {
+  source: 'config' | 'schema' | 'inherited' | 'unknown';
+  fields: { path: string; expr: string }[];
+}
+
+/** A node type removed from the library (Milestone 2). Identification data only; never executable. */
+export interface LegacyNodeType {
+  node_type: string;
+  label: string;
+  category: string;
+  description: string;
+  reason: string;
+  replacement?: string | null;
 }
 
 export interface RegistryCatalogResponse {
@@ -207,6 +259,8 @@ export interface WorkflowSummary {
   description: string;
   version: number;
   has_webhook: boolean;
+  /** Inactive workflows ignore webhook, form and schedule triggers (manual runs still work). */
+  active?: boolean;
   created_at: string | null;
   updated_at: string | null;
   last_execution_status?: ExecutionStatus | null;
@@ -284,7 +338,126 @@ export interface CredentialSummary {
   type: string;
   name: string;
   hints: Record<string, string>;
+  provider?: string | null;
   created_at: string | null;
+  updated_at?: string | null;
+}
+
+export interface CredentialTypeSpec {
+  type: string;
+  label: string;
+  fields: string[];
+  secret_fields: string[];
+  provider: string | null;
+  testable: boolean;
+}
+
+export interface CredentialTestResult {
+  ok: boolean;
+  message: string;
+  provider?: string | null;
+  category?: string | null;
+  models_available: string[];
+}
+
+/* ---------------- AI providers / agent tools ---------------- */
+
+export interface ModelCapabilities {
+  tool_calling: boolean;
+  structured_output: boolean;
+  streaming: boolean;
+  temperature: boolean;
+  reasoning_effort: boolean;
+  forced_tool_choice: boolean;
+  usage_reporting: boolean;
+  context_window: number;
+  max_output_tokens: number;
+}
+
+export interface AIModelInfo {
+  provider: string;
+  model: string;
+  label: string;
+  capabilities: ModelCapabilities;
+  verified: string;
+  recommended: boolean;
+}
+
+export interface AIProviderInfo {
+  id: string;
+  label: string;
+  credential_type: string;
+  docs_url: string;
+  platform_key_available: boolean;
+  models: AIModelInfo[];
+}
+
+export interface AgentToolInfo {
+  id: string;
+  name: string;
+  description: string;
+  provider: string;
+  permission: 'read_only' | 'network' | 'side_effect';
+  side_effects: boolean;
+  timeout_seconds: number;
+  tags: string[];
+}
+
+/* ---------------- Triggers ---------------- */
+
+export interface FormInfo {
+  node_id: string;
+  form_id: string;
+  url: string;
+  api_url: string;
+  enabled: boolean;
+  workflow_active: boolean;
+}
+
+export interface ScheduleInfo {
+  schedule_id: string;
+  node_id: string;
+  enabled: boolean;
+  workflow_active: boolean;
+  timezone: string;
+  spec: Record<string, any>;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_execution_id: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  upcoming: string[];
+}
+
+export interface SchedulePreview {
+  valid: boolean;
+  errors: string[];
+  kind?: 'interval' | 'cron';
+  expression?: string | null;
+  next_runs: string[];
+}
+
+export interface PublicFormField {
+  key: string;
+  label: string;
+  type: 'text' | 'email' | 'number' | 'textarea' | 'select' | 'checkbox';
+  required: boolean;
+  placeholder?: string;
+  help?: string;
+  options?: string[];
+  min?: number;
+  max?: number;
+  min_length?: number;
+  max_length?: number;
+}
+
+export interface PublicForm {
+  form_id: string;
+  title: string;
+  description: string;
+  submit_label: string;
+  fields: PublicFormField[];
+  honeypot_field: string;
 }
 
 export const TERMINAL_STATUSES: ExecutionStatus[] = ['completed', 'failed', 'cancelled'];

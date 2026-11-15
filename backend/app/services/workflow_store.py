@@ -42,6 +42,15 @@ def parse_definition(raw: Dict[str, Any], workflow_id: Optional[str] = None) -> 
     return upgrade_workflow(workflow)
 
 
+async def sync_triggers(session: AsyncSession, record: Workflow, workflow: WorkflowSchema) -> None:
+    """Persist public form endpoints and schedules for the saved version (same transaction as the save)."""
+    from app.services.forms import sync_forms
+    from app.services.schedules import sync_schedules
+
+    await sync_forms(session, record, workflow)
+    await sync_schedules(session, record, workflow)
+
+
 async def plan_for_user(session: AsyncSession, user_id: str, workflow: WorkflowSchema) -> ExecutionPlan:
     return plan_workflow(workflow, credential_ids=await credential_ids_for_user(session, user_id))
 
@@ -67,6 +76,8 @@ async def create_workflow(session: AsyncSession, user_id: str, raw: Dict[str, An
                       current_version=1)
     session.add(record)
     session.add(WorkflowVersion(workflow_id=wf_id, version=1, definition=workflow.model_dump(mode="json")))
+    await session.flush()
+    await sync_triggers(session, record, workflow)
     await session.commit()
     await session.refresh(record)
     return record, workflow
@@ -80,6 +91,7 @@ async def save_new_version(session: AsyncSession, record: Workflow, raw: Dict[st
     record.name = workflow.workflow_name
     record.description = workflow.description
     session.add(WorkflowVersion(workflow_id=record.id, version=next_version, definition=workflow.model_dump(mode="json")))
+    await sync_triggers(session, record, workflow)
     await session.commit()
     await session.refresh(record)
     return workflow

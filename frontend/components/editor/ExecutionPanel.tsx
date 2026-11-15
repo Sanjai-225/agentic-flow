@@ -19,8 +19,103 @@ function StatusDot({ color }: { color: string }) {
   return <span className="inline-block h-2 w-2 flex-shrink-0 rounded-full" style={{ background: color }} />;
 }
 
+type DetailTab = 'output' | 'input' | 'error' | 'logs' | 'ai' | 'iterations';
+
+/** AI summary/trace for ai.generate / ai.agent (from metadata on success, error.details on failure). */
+export function aiInfo(node: NodeExecution): { summary: any; trace: any[]; calls: any[] } | null {
+  const meta = node.metadata || {};
+  const details = node.error?.details || {};
+  const summary = meta.ai || details.ai;
+  const trace = meta.agent_trace || details.agent_trace || meta.trace || details.trace || [];
+  const calls = meta.model_calls || details.model_calls || [];
+  if (!summary && !trace.length && !calls.length) return null;
+  return { summary, trace, calls };
+}
+
+export function AgentTrace({ node }: { node: NodeExecution }) {
+  const info = aiInfo(node);
+  if (!info) return <p className="text-[11px] text-[var(--text-muted)]">No AI activity recorded.</p>;
+  const { summary, trace, calls } = info;
+  const usage = summary?.usage || {};
+  const toolCalls = trace.filter((t: any) => t.type === 'tool_call');
+  const iterations = trace.filter((t: any) => t.type === 'model_call').length;
+  return (
+    <div className="space-y-2 text-[11px]" data-testid="agent-trace">
+      {summary && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[var(--text-secondary)]">
+          <span>Requested: <b>{summary.requested?.provider}/{summary.requested?.model}</b></span>
+          <span>Used: <b>{summary.provider}/{summary.model}</b> ({summary.credential_source} key)</span>
+          <span>Fallback: {summary.fallback_used ? <b className="text-[var(--warning)]">used</b> : summary.fallback_configured ? 'configured, not used' : 'none'}</span>
+          <span>Model calls: {calls.length}{iterations ? ` · agent iterations: ${iterations}` : ''}</span>
+          <span>Tokens: {usage.total_tokens ?? 'not reported'}{usage.input_tokens != null ? ` (in ${usage.input_tokens} / out ${usage.output_tokens})` : ''}</span>
+          {summary.fallback_reason && <span className="col-span-2 text-[var(--warning)]">Fallback reason: {summary.fallback_reason}</span>}
+        </div>
+      )}
+      {toolCalls.length > 0 && (
+        <table className="w-full text-left text-[10.5px]">
+          <thead className="text-[var(--text-muted)]">
+            <tr><th>#</th><th>Tool</th><th>Status</th><th>Arguments (redacted)</th><th>Result / reason</th><th>ms</th></tr>
+          </thead>
+          <tbody>
+            {toolCalls.map((t: any, i: number) => (
+              <tr key={i} className="align-top">
+                <td>{i + 1}</td>
+                <td className="font-mono">{t.tool}</td>
+                <td className={t.status === 'success' ? 'text-[var(--success)]' : 'text-[var(--danger)]'}>{t.status}</td>
+                <td className="max-w-[220px] break-all font-mono">{JSON.stringify(t.args ?? {})}</td>
+                <td className="max-w-[260px] break-all">{t.result_summary || t.reason || ''}</td>
+                <td>{t.duration_ms ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {calls.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-[var(--text-muted)]">Model calls ({calls.length})</summary>
+          <Json value={calls} />
+        </details>
+      )}
+      <p className="text-[10px] text-[var(--text-muted)]">Only tool calls, results and final outputs are recorded; model reasoning is never stored.</p>
+    </div>
+  );
+}
+
+export function LoopIterations({ node }: { node: NodeExecution }) {
+  const meta = node.metadata || {};
+  if (meta.loop && node.output) {
+    const out = node.output;
+    return (
+      <div className="space-y-1 text-[11px]" data-testid="loop-iterations">
+        <p className="text-[var(--text-secondary)]">{out.count} item(s): {out.succeeded} succeeded, {out.failed} failed.</p>
+        {(out.errors || []).map((e: any) => (
+          <p key={e.index} className="text-[var(--danger)]">Item {e.index} failed at {e.node_id}: {e.message}</p>
+        ))}
+        <Json value={out.results} />
+      </div>
+    );
+  }
+  const iterations: any[] = meta.iterations || [];
+  return (
+    <div className="space-y-1 text-[11px]" data-testid="loop-iterations">
+      <p className="text-[var(--text-secondary)]">Ran in {meta.iteration_count ?? 0} iteration(s) of loop <code>{meta.loop_id}</code>{meta.iterations_truncated ? ' (first 100 shown)' : ''}.</p>
+      <ul className="space-y-0.5">
+        {iterations.map((it) => (
+          <li key={it.index} className="font-mono text-[10.5px]">
+            <span className={it.status === 'success' ? 'text-[var(--success)]' : it.status === 'failed' ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'}>#{it.index} {it.status}</span>{' '}
+            {it.error || (it.output_preview !== undefined ? JSON.stringify(it.output_preview).slice(0, 200) : '')}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function NodeDetail({ node, execution }: { node: NodeExecution; execution: ExecutionDetail }) {
-  const [tab, setTab] = useState<'output' | 'input' | 'error' | 'logs'>(node.error ? 'error' : 'output');
+  const hasAi = Boolean(aiInfo(node));
+  const hasIterations = Boolean(node.metadata?.loop || node.metadata?.iterations);
+  const [tab, setTab] = useState<DetailTab>(node.error ? 'error' : hasAi ? 'ai' : 'output');
+  const tabs: DetailTab[] = ['output', 'input', 'error', 'logs', ...(hasAi ? (['ai'] as DetailTab[]) : []), ...(hasIterations ? (['iterations'] as DetailTab[]) : [])];
   const logs = execution.logs.filter((l) => l.node_id === node.node_id);
   const style = NODE_STATUS_STYLE[node.status];
   return (
@@ -39,14 +134,14 @@ export function NodeDetail({ node, execution }: { node: NodeExecution; execution
         </span>
       </div>
       <div className="mb-2 flex gap-1">
-        {(['output', 'input', 'error', 'logs'] as const).map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-md px-2 py-1 text-[11px] capitalize ${tab === t ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}
             style={tab === t ? { background: 'var(--surface-hover)' } : undefined}
           >
-            {t}
+            {t === 'ai' ? 'AI / agent' : t}
             {t === 'error' && node.error ? ' ●' : ''}
             {t === 'logs' ? ` (${logs.length})` : ''}
           </button>
@@ -55,6 +150,8 @@ export function NodeDetail({ node, execution }: { node: NodeExecution; execution
       <div className="flex-1 overflow-auto">
         {tab === 'output' && (node.status === 'skipped' ? <p className="text-[11px] text-[var(--text-muted)]">Skipped: {node.metadata?.skip_reason || 'not executed'}.</p> : <Json value={node.output} />)}
         {tab === 'input' && <Json value={node.inputs} />}
+        {tab === 'ai' && <AgentTrace node={node} />}
+        {tab === 'iterations' && <LoopIterations node={node} />}
         {tab === 'error' &&
           (node.error ? (
             <div className="space-y-2 text-[11px]" data-testid="node-error">

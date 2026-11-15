@@ -38,4 +38,4 @@ def _load_builtin_executors() -> None:
     if _loaded:
         return
     _loaded = True
-    from app.executors import core, http  # noqa: F401  (import registers executors)
+    from app.executors import ai, core, flow, http  # noqa: F401  (import registers executors)

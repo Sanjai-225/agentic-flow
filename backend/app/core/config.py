@@ -57,8 +57,35 @@ class Settings:
         )
         self.HTTP_MAX_RESPONSE_BYTES: int = int(os.getenv("HTTP_MAX_RESPONSE_BYTES", str(5 * 1024 * 1024)))
         self.PUBLIC_BASE_URL: str = (os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").strip()).rstrip("/")
+        # Public URL of the frontend (hosted form pages live at {PUBLIC_APP_URL}/forms/{form_id}).
+        self.PUBLIC_APP_URL: str = (os.getenv("PUBLIC_APP_URL", "http://localhost:3000").strip()).rstrip("/")
         self.EXECUTION_MAX_DURATION_SECONDS: int = int(os.getenv("EXECUTION_MAX_DURATION_SECONDS", "900"))
         self.WEBHOOK_MAX_BODY_BYTES: int = int(os.getenv("WEBHOOK_MAX_BODY_BYTES", str(1024 * 1024)))
+
+        # --- AI model providers (Milestone 2) ---
+        # Platform-level keys: used by AI Generate / Universal Agent nodes only when a node selects no user
+        # credential AND AI_ALLOW_PLATFORM_KEYS is on (default: on outside production, off in production).
+        self.OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
+        self.ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        self.AI_ALLOW_PLATFORM_KEYS: bool = _parse_bool(os.getenv("AI_ALLOW_PLATFORM_KEYS"),
+                                                        default=not self.is_production)
+        # JSON list of operator-added models: [{"provider": "openai", "model": "...", ...capabilities}].
+        self.AI_EXTRA_MODELS: str = os.getenv("AI_EXTRA_MODELS", "").strip()
+        self.AI_MODEL_MAX_RETRIES: int = int(os.getenv("AI_MODEL_MAX_RETRIES", "2"))
+        self.AI_MAX_TIMEOUT_SECONDS: float = float(os.getenv("AI_MAX_TIMEOUT_SECONDS", "300"))
+        self.AGENT_DISABLED_TOOLS: List[str] = [
+            t.strip() for t in os.getenv("AGENT_DISABLED_TOOLS", "").split(",") if t.strip()
+        ]
+        self.AGENT_ALLOW_NETWORK_TOOLS: bool = _parse_bool(os.getenv("AGENT_ALLOW_NETWORK_TOOLS"), default=True)
+
+        # --- Triggers and flow nodes (Milestone 2) ---
+        self.SCHEDULER_ENABLED: bool = _parse_bool(os.getenv("SCHEDULER_ENABLED"), default=True)
+        self.SCHEDULER_POLL_SECONDS: float = float(os.getenv("SCHEDULER_POLL_SECONDS", "5"))
+        self.SCHEDULE_MIN_INTERVAL_MINUTES: int = int(os.getenv("SCHEDULE_MIN_INTERVAL_MINUTES", "1"))
+        self.FORM_MAX_BODY_BYTES: int = int(os.getenv("FORM_MAX_BODY_BYTES", str(64 * 1024)))
+        self.FORM_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("FORM_RATE_LIMIT_PER_MINUTE", "10"))
+        self.WEBHOOK_RATE_LIMIT_PER_MINUTE: int = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "120"))
+        self.LOOP_MAX_ITEMS: int = int(os.getenv("LOOP_MAX_ITEMS", "1000"))
 
     @property
     def is_production(self) -> bool:

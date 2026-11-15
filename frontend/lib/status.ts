@@ -28,6 +28,22 @@ export const CATEGORY_COLOR: Record<string, string> = {
   human_in_the_loop: '#f472b6',
 };
 
+/** Preferred display order; categories the backend adds later are appended, never dropped. */
+export const CATEGORY_ORDER = ['input_output', 'ai_agent', 'data_processing', 'logic', 'tools', 'memory_knowledge', 'human_in_the_loop'];
+
+export function categoryColor(category: string | undefined): string {
+  return (category && CATEGORY_COLOR[category]) || '#94a3b8';
+}
+
+export function categoryLabel(category: string): string {
+  return CATEGORY_LABEL[category] || category.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function orderCategories(present: string[]): string[] {
+  const known = CATEGORY_ORDER.filter((c) => present.includes(c));
+  return [...known, ...present.filter((c) => !CATEGORY_ORDER.includes(c)).sort()];
+}
+
 export const CATEGORY_LABEL: Record<string, string> = {
   input_output: 'Triggers & I/O',
   logic: 'Control flow',

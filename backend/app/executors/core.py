@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
@@ -46,42 +46,85 @@ def set_path(target: Dict[str, Any], path: str, value: Any, field: str) -> None:
     cursor[parts[-1]] = value
 
 
-def coerce(value: Any, type_: str, field: str) -> Any:
+def describe_value(value: Any) -> str:
+    """Short, user-facing description of a runtime value for error messages."""
+    if value is None:
+        return "empty (null)"
+    if isinstance(value, bool):
+        return f"the boolean {'true' if value else 'false'}"
+    if isinstance(value, (int, float)):
+        return f"the number {value}"
+    if isinstance(value, str):
+        if not value.strip():
+            return "empty text"
+        preview = value if len(value) <= 40 else value[:37] + "..."
+        return f"the text '{preview}'"
+    if isinstance(value, dict):
+        return "an object"
+    if isinstance(value, list):
+        return f"an array ({len(value)} items)"
+    return f"a {type(value).__name__} value"
+
+
+_TYPE_HINTS = {
+    "number": "a number such as 42 or 3.5 (text like '42' is converted automatically)",
+    "boolean": "true/false (also accepted: yes/no, 1/0)",
+    "object": "a JSON object such as {\"key\": \"value\"}",
+    "array": "a JSON array such as [1, 2, 3]",
+}
+
+
+def coerce(value: Any, type_: str, field: str, name: Optional[str] = None) -> Any:
+    """Convert ``value`` to the Set field type, raising user-readable errors."""
     if type_ == "auto":
         return value
-    try:
-        if type_ == "string":
-            return to_text(value)
-        if type_ == "number":
-            if isinstance(value, bool):
-                raise ValueError("boolean is not a number")
-            if isinstance(value, (int, float)):
-                return value
-            text = str(value).strip()
-            number = float(text)
-            return int(number) if number.is_integer() and "." not in text and "e" not in text.lower() else number
-        if type_ == "boolean":
-            if isinstance(value, bool):
-                return value
-            text = str(value).strip().lower()
-            if text in {"true", "1", "yes"}:
-                return True
-            if text in {"false", "0", "no", ""}:
-                return False
-            raise ValueError(f"'{value}' is not a boolean")
-        if type_ in {"object", "array"}:
-            parsed = json.loads(value) if isinstance(value, str) else value
-            expected = dict if type_ == "object" else list
-            if not isinstance(parsed, expected):
-                raise ValueError(f"expected {type_}, got {type(parsed).__name__}")
-            return parsed
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        raise NodeExecutionError(
+    label = f"Field '{name}'" if name else "The value"
+
+    def fail(reason: str) -> NodeExecutionError:
+        return NodeExecutionError(
             ErrorCategory.NODE_EXECUTION,
-            f"Could not convert value to {type_}: {exc}",
+            f"{label} expects {_TYPE_HINTS.get(type_, type_)}, but the value is {reason}.",
             field=field,
-            suggestion=f"Provide a value that can be converted to {type_}, or set the field type to 'auto'.",
-        ) from exc
+            suggestion=f"Check the value or the upstream data it references, or change the field type "
+                       f"from '{type_}' to 'auto' to keep the value as it is.",
+            details={"field_name": name, "expected_type": type_, "actual": describe_value(value)},
+        )
+
+    if type_ == "string":
+        return to_text(value)
+    if type_ == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise fail(describe_value(value))
+        if isinstance(value, (int, float)):
+            return value
+        text = value.strip()
+        try:
+            number = float(text)
+        except ValueError:
+            raise fail(describe_value(value)) from None
+        if number != number or number in (float("inf"), float("-inf")):
+            raise fail(describe_value(value))
+        return int(number) if number.is_integer() and "." not in text and "e" not in text.lower() else number
+    if type_ == "boolean":
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"true", "1", "yes"}:
+            return True
+        if text in {"false", "0", "no", ""}:
+            return False
+        raise fail(describe_value(value))
+    if type_ in {"object", "array"}:
+        parsed = value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise fail(f"text that is not valid JSON ({exc.msg} at column {exc.colno})") from None
+        expected = dict if type_ == "object" else list
+        if not isinstance(parsed, expected):
+            raise fail(describe_value(parsed))
+        return parsed
     return value
 
 
@@ -122,7 +165,7 @@ class SetExecutor(NodeExecutor):
                 result = {"input": copy.deepcopy(ctx.upstream)}
         for idx, f in enumerate(config.fields):
             field = f"fields[{idx}].value"
-            set_path(result, f.name, coerce(f.value, f.type, field), f"fields[{idx}].name")
+            set_path(result, f.name, coerce(f.value, f.type, field, f.name), f"fields[{idx}].name")
         return NodeExecutionResult(output=result)
 
 

@@ -1,7 +1,8 @@
 """Pydantic schemas for the Node Registry system (Phase 3)."""
 
+import re
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Type
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type
 
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
@@ -72,6 +73,17 @@ ConfigWidget = Literal[
     "conditions",
     "set_fields",
     "credential",
+    # JSON with {{...}} references; a value that is exactly one reference keeps its native type.
+    "json_template",
+    # Key/value rows whose values are parsed like json_template (objects, arrays, numbers, references).
+    "keyvalue_json",
+    # Milestone 2 editors
+    "model_select",    # provider -> verified model -> provider credential (+ options)
+    "tool_select",     # explicit agent tool allowlist
+    "json_schema",     # JSON Schema editor (validated)
+    "form_fields",     # form builder for the Form Submission Trigger
+    "schedule",        # schedule editor with next-run preview
+    "switch_cases",    # Switch cases (conditions per output port)
 ]
 
 
@@ -89,6 +101,21 @@ class ConfigField(BaseModel):
     show_if: Optional[Dict[str, List[str]]] = Field(
         default=None, description="Render only when another field has one of the listed values."
     )
+
+
+class DynamicPorts(BaseModel):
+    """Ports derived from the node config (e.g. Switch cases, Merge inputs). Resolved identically by the planner
+    and the editor: ``list`` -> one port per item's ``key_field`` value; ``count`` -> ``prefix1..prefixN``;
+    ``fixed`` ports are appended."""
+
+    direction: Literal["in", "out"]
+    source: Literal["list", "count"]
+    config_key: str
+    key_field: Optional[str] = None
+    prefix: Optional[str] = None
+    fixed: List[str] = Field(default_factory=list)
+    min_count: int = 1
+    max_count: int = 20
 
 
 class NodeDefinition(BaseModel):
@@ -135,6 +162,19 @@ class NodeDefinition(BaseModel):
     )
     default_retry: RetryPolicy = Field(default_factory=RetryPolicy)
     default_timeout_seconds: float = Field(default=60.0, gt=0, le=3600)
+    id_prefix: Optional[str] = Field(
+        default=None,
+        description="Prefix for predictable node ids (<id_prefix>_<n>, e.g. set_1). Defaults to the last "
+                    "segment of operation_id.",
+    )
+    dynamic_ports: Optional[DynamicPorts] = Field(
+        default=None, description="Ports computed from the config (overrides ports_in/ports_out for one direction).")
+    ai_guidance: Optional[str] = Field(
+        default=None, description="Extra usage rules shown to the AI designer/reviewer (ports, semantics)."
+    )
+    # Optional hook: config -> output field paths (or PASSTHROUGH_OUTPUT) used to show available data
+    # fields before the first execution. See app.engine.output_fields.
+    infer_output: Optional[Callable[[Dict[str, Any]], Any]] = Field(default=None, exclude=True)
 
     @field_validator("node_type")
     @classmethod
@@ -148,7 +188,34 @@ class NodeDefinition(BaseModel):
     def _default_operation_id(self) -> "NodeDefinition":
         if not self.operation_id:
             self.operation_id = self.node_type
+        if not self.id_prefix:
+            self.id_prefix = re.sub(r"[^a-z0-9_]", "_", self.operation_id.split(".")[-1].lower())
         return self
+
+    def ports_for(self, config: Any) -> Tuple[List[str], List[str]]:
+        """(ports_in, ports_out) for a concrete node config."""
+        ports_in, ports_out = list(self.ports_in), list(self.ports_out)
+        spec = self.dynamic_ports
+        if spec is None:
+            return ports_in, ports_out
+        value = config.get(spec.config_key) if isinstance(config, dict) else None
+        ports: List[str] = []
+        if spec.source == "list" and isinstance(value, list):
+            for item in value[: spec.max_count]:
+                key = item.get(spec.key_field) if isinstance(item, dict) and spec.key_field else None
+                if isinstance(key, str) and key and key not in ports:
+                    ports.append(key)
+        elif spec.source == "count":
+            try:
+                count = int(value if value is not None else spec.min_count)
+            except (TypeError, ValueError):
+                count = spec.min_count
+            count = max(spec.min_count, min(spec.max_count, count))
+            ports = [f"{spec.prefix or 'input_'}{i}" for i in range(1, count + 1)]
+        ports += [p for p in spec.fixed if p not in ports]
+        if spec.direction == "in":
+            return ports, ports_out
+        return ports_in, ports
 
     @computed_field  # type: ignore[prop-decorator]
     @property

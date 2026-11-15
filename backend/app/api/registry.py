@@ -3,6 +3,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 
+from app.registry.legacy import LEGACY_NODE_TYPES, LegacyNodeType
 from app.registry.node_registry import NodeRegistry, get_default_registry
 from app.schemas.registry import NodeDefinition, RegistryCatalogResponse
 
@@ -48,3 +49,12 @@ async def get_node_definition(node_type: str) -> NodeDefinition:
             detail=f"Node type '{node_type}' not found in registry.",
         )
     return node
+
+
+@router.get("/legacy", response_model=List[LegacyNodeType])
+async def list_legacy_node_types() -> List[LegacyNodeType]:
+    """Node types removed from the library. Used to label preserved legacy nodes in old workflows.
+
+    These are identification data only; none of them is executable or mapped to another operation.
+    """
+    return list(LEGACY_NODE_TYPES.values())

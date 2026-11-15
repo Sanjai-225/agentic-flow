@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import { summarizeWorkflow } from '@/components/ChatPanel';
-import { WorkflowNodeView } from '@/components/CustomNode';
+import { WorkflowNodeView, legacyTypeOf } from '@/components/CustomNode';
 import { NodeDetail } from '@/components/editor/ExecutionPanel';
 import { ConditionsEditor, SetFieldsEditor, parseScalar } from '@/components/editor/fields';
-import { filterDefinitions } from '@/components/editor/NodeLibrary';
+import { filterDefinitions, groupDefinitions } from '@/components/editor/NodeLibrary';
 
 import { definition, execution } from './fixtures';
 
@@ -38,11 +38,21 @@ describe('WorkflowNodeView renders backend execution state', () => {
     expect(screen.getByText(/2 attempts/)).toBeInTheDocument();
   });
 
-  it('flags design-only and unknown nodes as not executable', () => {
-    const { rerender } = render(<WorkflowNodeView node={{ ...setNode, operation: 'llm_agent' }} definition={definition({ operation_id: 'llm_agent', executable: false, status: 'design_only' })} />);
-    expect(screen.getByText(/Design-only/)).toBeInTheDocument();
+  it('flags legacy and unknown nodes as not executable, keeping the legacy label', () => {
+    const legacy = { node_type: 'llm_agent', label: 'AI Agent / LLM Reasoning (legacy)', category: 'ai_agent', description: 'd', reason: 'r', replacement: 'Use ai.agent' };
+    const { rerender } = render(<WorkflowNodeView node={{ ...setNode, operation: 'llm_agent', type: 'llm_agent' }} legacy={legacy} />);
+    expect(screen.getByText(/Unsupported legacy node/)).toBeInTheDocument();
+    expect(screen.getByText('AI Agent / LLM Reasoning (legacy)')).toBeInTheDocument();
     rerender(<WorkflowNodeView node={{ ...setNode, operation: 'unsupported:ocr' }} />);
-    expect(screen.getByText(/Not executable \(unsupported:ocr\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Unknown operation \(unsupported:ocr\)/)).toBeInTheDocument();
+  });
+
+  it('resolves legacy types from the operation, the unsupported: prefix or the node type', () => {
+    const types = { llm_agent: { node_type: 'llm_agent', label: 'L', category: 'ai_agent', description: '', reason: '' } };
+    expect(legacyTypeOf({ operation: 'llm_agent', type: 'x' }, types)?.label).toBe('L');
+    expect(legacyTypeOf({ operation: 'unsupported:llm_agent', type: 'x' }, types)?.label).toBe('L');
+    expect(legacyTypeOf({ operation: 'unsupported:x', type: 'llm_agent' }, types)?.label).toBe('L');
+    expect(legacyTypeOf({ operation: 'core.set', type: 'set_variable' }, types)).toBeUndefined();
   });
 
   it('shows validation problems before a run', () => {
@@ -125,12 +135,22 @@ describe('config widgets', () => {
 });
 
 describe('node library and designer summary', () => {
-  const defs = [definition({ operation_id: 'core.set', label: 'Set', tags: ['data'] }), definition({ operation_id: 'llm_agent', label: 'LLM Agent', executable: false })];
+  const defs = [
+    definition({ operation_id: 'core.set', label: 'Set', tags: ['data'] }),
+    definition({ operation_id: 'http.request', label: 'HTTP Request', category: 'tools', tags: ['api'] }),
+    definition({ operation_id: 'ai.future', label: 'Future', category: 'brand_new_category' }),
+  ];
 
-  it('hides design-only nodes unless requested and searches tags/ids', () => {
-    expect(filterDefinitions(defs, '', false).map((d) => d.operation_id)).toEqual(['core.set']);
-    expect(filterDefinitions(defs, 'agent', true).map((d) => d.operation_id)).toEqual(['llm_agent']);
-    expect(filterDefinitions(defs, 'data', false)).toHaveLength(1);
+  it('searches labels, tags and ids (the registry only contains executable nodes)', () => {
+    expect(filterDefinitions(defs, '').map((d) => d.operation_id)).toEqual(['core.set', 'http.request', 'ai.future']);
+    expect(filterDefinitions(defs, 'api').map((d) => d.operation_id)).toEqual(['http.request']);
+    expect(filterDefinitions(defs, 'data')).toHaveLength(1);
+  });
+
+  it('groups by category without dropping categories the frontend does not know yet', () => {
+    const groups = groupDefinitions(defs).map(([c]) => c);
+    expect(groups).toContain('brand_new_category');
+    expect(groups.indexOf('tools')).toBeLessThan(groups.indexOf('brand_new_category'));
   });
 
   it('reports execution readiness honestly for generated workflows', () => {

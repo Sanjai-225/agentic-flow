@@ -127,9 +127,10 @@ export function flowToCanonical(
 }
 
 let counter = 0;
+/** Predictable node ids: the smallest unused `<id_prefix>_<n>` (set_1, set_2, http_1, ...). */
 export function uniqueNodeId(def: NodeDefinition, existing: Set<string>): string {
-  const base = def.operation_id.split('.').pop()!.replace(/[^a-z0-9_]/gi, '_');
-  let i = existing.size + 1;
+  const base = (def.id_prefix || def.operation_id.split('.').pop()!).replace(/[^a-z0-9_]/gi, '_');
+  let i = 1;
   let id = `${base}_${i}`;
   while (existing.has(id)) {
     i += 1;

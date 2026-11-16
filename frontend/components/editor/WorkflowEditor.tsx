@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Background, BackgroundVariant, Controls, MiniMap, ReactFlow } from '@xyflow/react';
+import { AlertTriangle, ArrowLeft, CheckCircle2, CircleAlert, Info, KeyRound, Loader2, PanelLeftOpen, Play, Save, Sparkles, Square, X } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 
 import ChatPanel from '@/components/ChatPanel';
@@ -30,11 +31,17 @@ function Notice() {
   }, [notice, setNotice]);
   if (!notice) return null;
   const color = notice.kind === 'error' ? 'var(--danger)' : notice.kind === 'success' ? 'var(--success)' : 'var(--accent)';
+  const Icon = notice.kind === 'error' ? CircleAlert : notice.kind === 'success' ? CheckCircle2 : Info;
   return (
-    <div className="glass-strong absolute left-1/2 top-3 z-30 flex max-w-xl -translate-x-1/2 items-start gap-2 rounded-xl px-3 py-2 text-xs" style={{ color }} role="status">
+    <div
+      className="hud animate-fade-up absolute left-1/2 top-[76px] z-40 flex w-[min(36rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-2 rounded-xl px-3 py-2.5 text-xs"
+      style={{ color }}
+      role="status"
+    >
+      <Icon size={15} className="mt-px flex-shrink-0" />
       <span className="flex-1">{notice.text}</span>
-      <button onClick={() => setNotice(null)} className="text-[var(--text-muted)]" aria-label="Dismiss">
-        ✕
+      <button onClick={() => setNotice(null)} className="text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]" aria-label="Dismiss">
+        <X size={14} />
       </button>
     </div>
   );
@@ -45,6 +52,7 @@ export default function WorkflowEditor({ workflowId }: { workflowId: string | nu
   const [showDesigner, setShowDesigner] = useState(false);
   const [showRun, setShowRun] = useState(false);
   const [showCreds, setShowCreds] = useState(false);
+  const [dockOpen, setDockOpen] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -123,65 +131,10 @@ export default function WorkflowEditor({ workflowId }: { workflowId: string | nu
   const running = s.execution && (s.execution.status === 'running' || s.execution.status === 'pending');
 
   return (
-    <div className="flex h-screen w-screen flex-col gap-3 overflow-hidden p-3">
-      {/* Toolbar */}
-      <header className="glass flex items-center gap-2 rounded-2xl px-3 py-2">
-        <Link href="/workflows" className="btn-ghost" title="All workflows">
-          ←
-        </Link>
-        <input aria-label="Workflow name" className="w-72 bg-transparent text-sm font-semibold text-[var(--text-primary)] outline-none" value={s.name} onChange={(e) => s.setMeta({ name: e.target.value })} />
-        <span className="text-[11px] text-[var(--text-muted)]">
-          {s.workflowId ? `v${s.version}` : 'not saved'}
-          {s.dirty ? ' · unsaved changes' : ''}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          {s.workflowId && (
-            <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]" title="Webhook, form and schedule triggers only start runs while the workflow is active. Manual runs always work.">
-              <input type="checkbox" aria-label="Workflow active" checked={s.active} onChange={(e) => s.setActive(e.target.checked)} />
-              {s.active ? 'Active' : 'Inactive'}
-            </label>
-          )}
-          <button className="btn-ghost" onClick={() => setShowDesigner((v) => !v)}>
-            ✦ AI Designer
-          </button>
-          <button className="btn-ghost" onClick={() => setShowCreds(true)}>
-            Credentials
-          </button>
-          <button className="btn-ghost" onClick={() => s.validate()} disabled={!!s.busy || !s.nodes.length}>
-            {s.busy === 'validating' ? 'Validating…' : 'Validate'}
-          </button>
-          <button className="btn-ghost" onClick={() => s.save()} disabled={!!s.busy || !s.nodes.length}>
-            {s.busy === 'saving' ? 'Saving…' : 'Save'}
-          </button>
-          {running ? (
-            <button className="btn-danger" onClick={() => s.cancel()}>
-              ■ Cancel run
-            </button>
-          ) : (
-            <button className="btn-primary" onClick={() => setShowRun(true)} disabled={!!s.busy || !s.nodes.length}>
-              {s.busy === 'starting' ? 'Starting…' : '▶ Run'}
-            </button>
-          )}
-        </div>
-      </header>
-
-      {loadError && (
-        <p className="rounded-xl px-3 py-2 text-xs" style={{ background: 'var(--error-light)', color: 'var(--danger)' }}>
-          {loadError}
-        </p>
-      )}
-
-      <div className="flex min-h-0 flex-1 gap-3">
-        {showDesigner ? (
-          <aside className="glass w-[360px] flex-shrink-0 overflow-hidden rounded-2xl">
-            <ChatPanel onWorkflowGenerated={onGenerated} onClose={() => setShowDesigner(false)} />
-          </aside>
-        ) : (
-          <NodeLibrary />
-        )}
-
-        <main className="glass relative min-w-0 flex-1 overflow-hidden rounded-2xl">
-          <Notice />
+    <div className="flex h-screen w-screen flex-col gap-2 overflow-hidden bg-[#07080C] p-2 sm:gap-3 sm:p-3">
+      <div className="canvas-surface relative min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/[0.06]">
+        {/* Infinite canvas */}
+        <main className="absolute inset-0">
           <ReactFlow<FlowNode>
             nodes={s.nodes}
             edges={s.edges}
@@ -199,23 +152,157 @@ export default function WorkflowEditor({ workflowId }: { workflowId: string | nu
             proOptions={{ hideAttribution: true }}
             colorMode="dark"
           >
-            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgba(255,255,255,0.08)" />
-            <Controls position="bottom-left" />
+            <Background variant={BackgroundVariant.Dots} gap={24} size={1.1} color="rgba(255,255,255,0.12)" />
+            <Controls position="bottom-left" className={`transition-[left] duration-200 ${dockOpen ? 'md:!left-[332px]' : ''}`} />
             <MiniMap
               position="bottom-right"
               pannable
               zoomable
-              maskColor="rgba(0,0,0,0.4)"
+              className="!hidden md:!block"
+              maskColor="rgba(7,8,12,0.6)"
               nodeColor={(n) => CATEGORY_COLOR[s.registryByOp[(n.data as any)?.node?.operation]?.category] || '#64748b'}
+              nodeBorderRadius={6}
             />
           </ReactFlow>
           {s.nodes.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-center text-xs text-[var(--text-muted)]">
-              Add nodes from the library, or describe a workflow to the AI Designer.
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6 text-center">
+              <div className={`flex flex-col items-center gap-3 ${dockOpen ? 'md:pl-[320px]' : ''}`}>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-400/25 bg-indigo-500/10 text-indigo-300 shadow-[0_0_40px_rgba(99,102,241,0.3)]">
+                  <Sparkles size={20} />
+                </span>
+                <p className="max-w-xs text-xs text-[var(--text-muted)]">Add nodes from the library, or describe a workflow to the AI Designer.</p>
+              </div>
             </div>
           )}
-          <NodeConfigPanel />
         </main>
+
+        {/* Floating toolbar */}
+        <header className="hud absolute left-2 right-2 top-2 z-30 flex items-center gap-2 rounded-xl px-2 py-2 sm:left-3 sm:right-3 sm:top-3 sm:px-3">
+          <Link href="/workflows" className="btn-icon flex-shrink-0" title="All workflows" aria-label="All workflows">
+            <ArrowLeft size={16} />
+          </Link>
+          <div className="h-5 w-px flex-shrink-0 bg-white/[0.08]" />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <input
+              aria-label="Workflow name"
+              className="min-w-0 max-w-[18rem] flex-1 truncate rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm font-semibold tracking-tight text-[var(--text-primary)] outline-none transition-colors hover:border-white/[0.08] hover:bg-white/[0.03] focus:border-indigo-400/40 focus:bg-white/[0.04]"
+              value={s.name}
+              onChange={(e) => s.setMeta({ name: e.target.value })}
+            />
+            <span className="hidden flex-shrink-0 items-center gap-1.5 text-[11px] text-[var(--text-muted)] lg:flex">
+              <span className="mono-badge">{s.workflowId ? `v${s.version}` : 'not saved'}</span>
+              {s.dirty && (
+                <span className="flex items-center gap-1 text-amber-300/90">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_#fbbf24]" />
+                  unsaved changes
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
+            {s.workflowId && (
+              <label
+                className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] font-medium text-[var(--text-secondary)]"
+                title="Webhook, form and schedule triggers only start runs while the workflow is active. Manual runs always work."
+              >
+                <input type="checkbox" aria-label="Workflow active" className="peer sr-only" checked={s.active} onChange={(e) => s.setActive(e.target.checked)} />
+                <span
+                  className="relative h-[18px] w-8 flex-shrink-0 rounded-full border transition-all duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-400/50"
+                  style={
+                    s.active
+                      ? { background: 'linear-gradient(135deg,#10b981,#06b6d4)', borderColor: 'rgba(110,231,183,0.5)', boxShadow: '0 0 14px rgba(16,185,129,0.45)' }
+                      : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.12)' }
+                  }
+                >
+                  <span className={`absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-white shadow transition-all duration-200 ${s.active ? 'left-[15px]' : 'left-[2px] opacity-70'}`} />
+                </span>
+                <span className={`hidden sm:inline ${s.active ? 'text-emerald-300' : ''}`}>{s.active ? 'Active' : 'Inactive'}</span>
+              </label>
+            )}
+            <div className="flex items-center rounded-lg border border-white/[0.08] bg-white/[0.03] p-0.5">
+              <button
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all active:scale-[0.97] ${showDesigner && dockOpen ? 'bg-violet-500/15 text-violet-200 shadow-[inset_0_0_0_1px_rgba(167,139,250,0.35)]' : 'text-violet-300 hover:bg-violet-500/10'}`}
+                onClick={() => {
+                  setDockOpen(true);
+                  setShowDesigner((v) => !(v && dockOpen));
+                }}
+                title="AI Designer"
+              >
+                <Sparkles size={14} />
+                <span className="hidden bg-gradient-to-r from-violet-300 to-indigo-300 bg-clip-text text-transparent md:inline">AI Designer</span>
+              </button>
+              <button
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all hover:bg-white/[0.06] hover:text-[var(--text-primary)] active:scale-[0.97]"
+                onClick={() => setShowCreds(true)}
+                title="Credentials"
+              >
+                <KeyRound size={14} />
+                <span className="hidden md:inline">Credentials</span>
+              </button>
+              <button
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all hover:bg-white/[0.06] hover:text-[var(--text-primary)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+                onClick={() => s.validate()}
+                disabled={!!s.busy || !s.nodes.length}
+                title="Validate"
+              >
+                {s.busy === 'validating' ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                <span className="hidden md:inline">{s.busy === 'validating' ? 'Validating…' : 'Validate'}</span>
+              </button>
+              <button
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-all hover:bg-white/[0.06] hover:text-[var(--text-primary)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+                onClick={() => s.save()}
+                disabled={!!s.busy || !s.nodes.length}
+                title="Save"
+              >
+                {s.busy === 'saving' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span className="hidden md:inline">{s.busy === 'saving' ? 'Saving…' : 'Save'}</span>
+              </button>
+            </div>
+            {running ? (
+              <button className="btn-danger px-3 py-[7px]" onClick={() => s.cancel()} title="Cancel run">
+                <Square size={12} fill="currentColor" />
+                <span className="hidden sm:inline">Cancel run</span>
+              </button>
+            ) : (
+              <button className="btn-run px-3.5 py-[7px]" onClick={() => setShowRun(true)} disabled={!!s.busy || !s.nodes.length}>
+                {s.busy === 'starting' ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} fill="currentColor" />}
+                {s.busy === 'starting' ? 'Starting…' : 'Run'}
+              </button>
+            )}
+          </div>
+        </header>
+
+        {loadError && (
+          <p className="hud absolute left-1/2 top-[76px] z-30 flex w-[min(36rem,calc(100%-1.5rem))] -translate-x-1/2 items-center gap-2 rounded-xl px-3 py-2 text-xs text-rose-300">
+            <AlertTriangle size={14} className="flex-shrink-0" />
+            {loadError}
+          </p>
+        )}
+
+        <Notice />
+
+        {/* Floating left dock: node library / AI designer */}
+        {dockOpen ? (
+          <div className="hud animate-slide-in-left absolute bottom-2 left-2 top-[62px] z-20 flex w-80 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl sm:bottom-3 sm:left-3 sm:top-[72px]">
+            {showDesigner ? (
+              <ChatPanel onWorkflowGenerated={onGenerated} onClose={() => setShowDesigner(false)} onCollapse={() => setDockOpen(false)} />
+            ) : (
+              <NodeLibrary onCollapse={() => setDockOpen(false)} />
+            )}
+          </div>
+        ) : (
+          <button
+            className="hud absolute left-2 top-[62px] z-20 flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-[var(--text-secondary)] transition-all hover:border-white/[0.18] hover:text-[var(--text-primary)] sm:left-3 sm:top-[72px]"
+            onClick={() => setDockOpen(true)}
+            title="Open panel"
+          >
+            <PanelLeftOpen size={15} />
+            {showDesigner ? 'AI Designer' : 'Nodes'}
+          </button>
+        )}
+
+        {/* Node configuration drawer (right) */}
+        <NodeConfigPanel />
       </div>
 
       <ExecutionPanel />

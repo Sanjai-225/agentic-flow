@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Activity, ChevronDown, ChevronUp, CircleAlert, History as HistoryIcon } from 'lucide-react';
 
 import { EXECUTION_STATUS_STYLE, NODE_STATUS_STYLE, formatDuration } from '@/lib/status';
 import { useEditorStore, type BottomTab } from '@/store/editorStore';
@@ -309,21 +310,29 @@ export default function ExecutionPanel() {
     ['history', 'History'],
     ['problems', `Problems${problemCount ? ` (${problemCount})` : ''}`],
   ];
+  const TAB_ICON = { execution: Activity, history: HistoryIcon, problems: CircleAlert } as const;
   return (
-    <section className={`glass-strong flex flex-col rounded-2xl transition-all ${open ? 'h-[300px]' : 'h-10'}`} aria-label="Execution panel">
-      <div className="flex items-center gap-1 border-b border-[var(--border)] px-3 py-1.5">
-        {tabs.map(([t, label]) => (
-          <button
-            key={t}
-            onClick={() => setBottom(true, t)}
-            className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${open && tab === t ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}
-            style={open && tab === t ? { background: 'var(--surface-hover)' } : undefined}
-          >
-            {label}
-          </button>
-        ))}
-        <button className="ml-auto text-[11px] text-[var(--text-muted)]" onClick={() => setBottom(!open)}>
-          {open ? 'Collapse ▾' : 'Expand ▴'}
+    <section className={`hud flex flex-shrink-0 flex-col overflow-hidden rounded-2xl transition-[height] duration-200 ${open ? 'h-[300px] max-h-[45vh]' : 'h-10'}`} aria-label="Execution panel">
+      <div className={`flex h-10 flex-shrink-0 items-center gap-1 px-2 ${open ? 'border-b border-[var(--border)]' : ''}`}>
+        {tabs.map(([t, label]) => {
+          const Icon = TAB_ICON[t as keyof typeof TAB_ICON] ?? Activity;
+          const active = open && tab === t;
+          return (
+            <button
+              key={t}
+              onClick={() => setBottom(true, t)}
+              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-all ${
+                active ? 'bg-white/[0.07] text-[var(--text-primary)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+              } ${t === 'problems' && problemCount ? '!text-rose-300' : ''}`}
+            >
+              <Icon size={12} />
+              {label}
+            </button>
+          );
+        })}
+        <button className="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-[var(--text-muted)] transition-colors hover:bg-white/[0.05] hover:text-[var(--text-primary)]" onClick={() => setBottom(!open)}>
+          {open ? 'Collapse' : 'Expand'}
+          {open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
         </button>
       </div>
       {open && (

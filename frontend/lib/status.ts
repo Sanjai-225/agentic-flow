@@ -20,11 +20,11 @@ export const EXECUTION_STATUS_STYLE: Record<ExecutionStatus, { color: string; la
 
 export const CATEGORY_COLOR: Record<string, string> = {
   input_output: '#f59e0b',
-  logic: '#f97316',
-  data_processing: '#22d3ee',
+  logic: '#60a5fa',
+  data_processing: '#2dd4bf',
   tools: '#34d399',
   ai_agent: '#a78bfa',
-  memory_knowledge: '#60a5fa',
+  memory_knowledge: '#38bdf8',
   human_in_the_loop: '#f472b6',
 };
 

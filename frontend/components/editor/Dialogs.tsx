@@ -1,18 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import type { CredentialSummary, CredentialTestResult, CredentialTypeSpec } from '@/types/workflow';
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-label={title} onMouseDown={onClose}>
-      <div className="glass-strong w-full max-w-lg rounded-2xl p-5" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">{title}</h2>
-          <button className="btn-ghost px-2" onClick={onClose} aria-label="Close">
-            ✕
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#030407]/70 p-4 backdrop-blur-sm" role="dialog" aria-label={title} onMouseDown={onClose}>
+      <div className="glass-strong animate-fade-up max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl p-5" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">{title}</h2>
+          <button className="btn-icon h-7 w-7" onClick={onClose} aria-label="Close">
+            <X size={15} />
           </button>
         </div>
         {children}

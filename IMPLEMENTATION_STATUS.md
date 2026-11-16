@@ -320,6 +320,17 @@ The second full E2E run hit the Gemini **free-tier daily quota** (429 `RESOURCE_
 ### Next step
 Milestone 2 (AI/Agent node), **once it is authorized**. Before coding it, verify current LangChain/LangGraph APIs and the provider model IDs.
 
+## UI refresh: "Obsidian Glass" (2026-11-16, frontend only)
+Visual-only overhaul. No changes to the backend, APIs, store, execution logic or component behaviour.
+- **Design system** (`app/globals.css`, `tailwind.config.ts`, `app/layout.tsx`): obsidian palette (`#07080C`/`#0D0F17`), frosted `hud`/`glass` surfaces, gradient glowing `btn-primary`, emerald `btn-run`, `btn-icon`, `mono-badge`, `status-pill`, Inter + JetBrains Mono, thin scrollbars, fade/slide animations (respecting reduced motion).
+- **Dashboard** (`app/workflows/page.tsx`): sticky glass nav with logo, avatar/email pill and sign-out icon; hero header and glowing CTA; workflow card grid with icon, version badge, relative time, pulsing semantic last-run badges, Active/webhook pills and a ghost trash button (same confirm + delete call).
+- **Editor** (`components/editor/WorkflowEditor.tsx`): full-bleed dot-grid canvas with nebula glow; floating toolbar (back, editable title, iOS-style Active switch wrapping the original checkbox, segmented AI Designer/Credentials/Validate/Save, emerald Run); floating, collapsible left dock for Nodes / AI Designer; glass Controls and MiniMap (MiniMap hidden on small screens).
+- **Node library / AI designer / config / execution panels / dialogs**: Lucide icons throughout, category-coloured icon tiles (`lib/icons.tsx`), search icon, Cursor-style prompt box with in-box Generate button, frosted suggestion cards, underline tabs, blurred modal backdrop.
+- **Canvas nodes** (`components/CustomNode.tsx`): glass cards with glowing category accent and wash, icon badge, monospace id badge, status pill in the footer, glowing handles and edges.
+- Category accents: Control flow is now blue (`#60a5fa`), Data teal (`#2dd4bf`), Knowledge sky (`#38bdf8`).
+- Test change: `editorUnmount.test.tsx` finds the AI Designer button by title, because the `✦` glyph became an icon.
+- Library items are still click-to-add (they were never draggable), so they use a pointer cursor, not a grab cursor.
+
 ## Key file map
 | Concern | Location |
 |---|---|

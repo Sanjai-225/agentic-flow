@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { Copy, Trash2, X } from 'lucide-react';
 
 import {
   ConditionsEditor,
@@ -17,6 +18,7 @@ import {
 import { api } from '@/lib/api';
 import { legacyTypeOf } from '@/components/CustomNode';
 import { FormFieldsEditor, JsonSchemaEditor, ModelSelect, ScheduleEditor, SwitchCasesEditor, ToolSelect } from '@/components/editor/advancedFields';
+import { NodeIconTile } from '@/lib/icons';
 import { categoryColor } from '@/lib/status';
 import { ancestorsOf, outputPaths } from '@/lib/workflowMapping';
 import { useEditorStore } from '@/store/editorStore';
@@ -353,25 +355,28 @@ export default function NodeConfigPanel() {
   const accent = definition ? categoryColor(definition.category) : '#94a3b8';
 
   return (
-    <aside className="glass-strong absolute right-3 top-3 bottom-3 z-20 flex w-[400px] flex-col overflow-hidden rounded-2xl" aria-label="Node configuration">
-      <div className="border-b border-[var(--border)] px-4 py-3">
-        <div className="flex items-center justify-between">
-          <span className="chip" style={{ color: accent, background: 'rgba(255,255,255,0.05)' }}>
-            {definition?.label || legacy?.label || node.type}
+    <aside className="hud animate-fade-up absolute bottom-2 right-2 top-[62px] z-30 flex w-[400px] max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-2xl sm:bottom-3 sm:right-3 sm:top-[72px]" aria-label="Node configuration">
+      <div className="relative border-b border-[var(--border)] px-4 py-3" style={{ background: `linear-gradient(180deg, ${accent}1f, transparent)` }}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2">
+            <NodeIconTile operation={node.operation} category={definition?.category || legacy?.category} size={28} />
+            <span className="chip truncate" style={{ color: accent, background: 'rgba(255,255,255,0.05)' }}>
+              {definition?.label || legacy?.label || node.type}
+            </span>
           </span>
-          <div className="flex gap-1">
-            <button className="btn-ghost px-2" title="Duplicate" onClick={() => duplicateNode(node.id)}>
-              ⧉
+          <div className="flex gap-0.5">
+            <button className="btn-icon h-7 w-7" title="Duplicate" aria-label="Duplicate" onClick={() => duplicateNode(node.id)}>
+              <Copy size={14} />
             </button>
-            <button className="btn-danger px-2" title="Delete" onClick={() => deleteNode(node.id)}>
-              🗑
+            <button className="btn-icon h-7 w-7 hover:!bg-rose-500/10 hover:!text-rose-400" title="Delete" aria-label="Delete" onClick={() => deleteNode(node.id)}>
+              <Trash2 size={14} />
             </button>
-            <button className="btn-ghost px-2" title="Close" onClick={() => selectNode(null)}>
-              ✕
+            <button className="btn-icon h-7 w-7" title="Close" aria-label="Close" onClick={() => selectNode(null)}>
+              <X size={15} />
             </button>
           </div>
         </div>
-        <input aria-label="Node label" className="mt-2 w-full bg-transparent text-sm font-semibold text-[var(--text-primary)] outline-none" value={node.label} onChange={(e) => patch({ label: e.target.value })} />
+        <input aria-label="Node label" className="mt-2.5 w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 -mx-1 text-[15px] font-semibold tracking-tight text-[var(--text-primary)] outline-none transition-colors hover:border-white/[0.08] focus:border-indigo-400/40" value={node.label} onChange={(e) => patch({ label: e.target.value })} />
         <p className="font-mono text-[10px] text-[var(--text-muted)]">
           {node.id} · {node.operation || node.type}
         </p>
@@ -408,13 +413,12 @@ export default function NodeConfigPanel() {
         )}
       </div>
 
-      <div className="flex gap-1 border-b border-[var(--border)] px-3 pt-2">
+      <div className="flex gap-1 border-b border-[var(--border)] px-3">
         {(['parameters', 'settings', 'data', 'json'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`rounded-t-md px-2.5 py-1.5 text-[11px] font-medium capitalize ${tab === t ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`}
-            style={tab === t ? { background: 'var(--surface-hover)' } : undefined}
+            className={`relative -mb-px border-b-2 px-2.5 py-2 text-[11px] font-medium capitalize transition-colors ${tab === t ? 'border-indigo-400 text-[var(--text-primary)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
           >
             {t}
           </button>

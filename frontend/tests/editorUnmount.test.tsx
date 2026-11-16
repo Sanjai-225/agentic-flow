@@ -41,7 +41,7 @@ describe('WorkflowEditor lifecycle', () => {
     });
     // Close the AI designer (unmounts ChatPanel), reopen it, then unmount everything.
     fireEvent.click(screen.getByLabelText('Close designer'));
-    fireEvent.click(screen.getByText('✦ AI Designer'));
+    fireEvent.click(screen.getByTitle('AI Designer'));
     fireEvent.click(screen.getByLabelText('Close designer'));
     view.unmount();
     spy.mockRestore();

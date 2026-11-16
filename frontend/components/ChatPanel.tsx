@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { AlertTriangle, ArrowUp, ArrowUpRight, Loader2, PanelLeftClose, Sparkles, X } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import type { ReviewIssue, WorkflowResponse } from '@/types/workflow';
@@ -15,6 +16,8 @@ interface ChatMessage {
 interface ChatPanelProps {
   onWorkflowGenerated: (workflow: WorkflowResponse) => void;
   onClose?: () => void;
+  /** Collapse the dock that hosts the panel (presentation only). */
+  onCollapse?: () => void;
 }
 
 /**
@@ -96,7 +99,7 @@ export function summarizeWorkflow(workflow: WorkflowResponse): string {
   return `**${workflow.workflow_name}**\n\n${workflow.description}\n\n**Nodes (${workflow.nodes.length}):**\n${nodeList}${review}${exec}`;
 }
 
-export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelProps) {
+export default function ChatPanel({ onWorkflowGenerated, onClose, onCollapse }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -156,31 +159,45 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">AI Workflow Designer</h2>
-          <p className="text-[11px] text-[var(--text-muted)]">Gemini designer · semantic review · schema validation</p>
+    <div className="relative flex h-full flex-col">
+      {/* Ambient aura */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-violet-600/20 via-indigo-600/[0.07] to-transparent" />
+      <div className="pointer-events-none absolute -top-16 left-1/2 h-32 w-48 -translate-x-1/2 rounded-full bg-violet-500/25 blur-3xl" />
+      <div className="relative flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-violet-400/30 bg-gradient-to-br from-violet-500/30 to-indigo-500/20 text-violet-200 shadow-[0_0_18px_rgba(139,92,246,0.4)]">
+            <Sparkles size={15} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="truncate text-[13px] font-semibold tracking-tight text-[var(--text-primary)]">AI Workflow Designer</h2>
+            <p className="truncate text-[10.5px] text-[var(--text-muted)]">Gemini designer · semantic review · schema validation</p>
+          </div>
         </div>
-        {onClose && (
-          <button className="btn-ghost px-2" onClick={onClose} aria-label="Close designer">
-            ✕
-          </button>
-        )}
+        <div className="flex flex-shrink-0 gap-0.5">
+          {onCollapse && (
+            <button className="btn-icon h-7 w-7" onClick={onCollapse} title="Collapse panel" aria-label="Collapse panel">
+              <PanelLeftClose size={15} />
+            </button>
+          )}
+          {onClose && (
+            <button className="btn-icon h-7 w-7" onClick={onClose} aria-label="Close designer" title="Close designer">
+              <X size={15} />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+      <div className="relative flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className="max-w-[94%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed"
-              style={
+              className={`animate-fade-up max-w-[94%] rounded-2xl px-3.5 py-2.5 text-[12.5px] leading-relaxed ${
                 msg.role === 'user'
-                  ? { background: 'var(--accent-strong)', color: 'white' }
+                  ? 'rounded-br-md border border-indigo-300/25 bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-[0_6px_20px_-6px_rgba(99,102,241,0.6)]'
                   : msg.role === 'error'
-                    ? { background: 'var(--error-light)', color: 'var(--danger)' }
-                    : { background: 'var(--surface-hover)', color: 'var(--text-secondary)' }
-              }
+                    ? 'border border-rose-500/20 bg-rose-500/10 text-rose-300'
+                    : 'rounded-bl-md border border-white/[0.06] bg-white/[0.04] text-[var(--text-secondary)]'
+              }`}
             >
               {msg.role === 'assistant' ? (
                 <div className="space-y-2 break-words">
@@ -200,14 +217,17 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
                   ))}
                 </div>
               ) : (
-                <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                <div className="flex gap-2 whitespace-pre-wrap break-words">
+                  {msg.role === 'error' && <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />}
+                  <span className="min-w-0 flex-1">{msg.content}</span>
+                </div>
               )}
             </div>
           </div>
         ))}
         {isLoading && (
-          <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" />
+          <div className="flex items-center gap-2 rounded-xl border border-violet-400/15 bg-violet-500/[0.07] px-3 py-2 text-[11px] text-violet-200">
+            <Loader2 size={13} className="animate-spin" />
             {['Generating workflow…', 'Reviewing workflow…', 'Finalizing…'][loadingPhase]}
           </div>
         )}
@@ -215,27 +235,31 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
       </div>
 
       {messages.length <= 1 && (
-        <div className="px-4 pb-2">
-          <p className="mb-1.5 text-[11px] text-[var(--text-muted)]">Try a ready-to-run workflow:</p>
-          <div className="max-h-64 space-y-1.5 overflow-y-auto">
+        <div className="relative px-4 pb-2">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">Try a ready-to-run workflow:</p>
+          <div className="max-h-64 space-y-1.5 overflow-y-auto pr-0.5">
             {EXAMPLE_PROMPTS.map((p) => (
               <button
                 key={p.title}
                 onClick={() => handleSubmit(p.prompt)}
                 disabled={isLoading}
                 title={p.prompt}
-                className="block w-full rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-left hover:bg-[var(--surface-hover)]"
+                className="group block w-full rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2 text-left transition-all duration-150 hover:border-violet-400/30 hover:bg-violet-500/[0.08] hover:shadow-[0_0_20px_-6px_rgba(139,92,246,0.5)] disabled:opacity-50"
               >
-                <span className="block text-[12px] font-medium text-[var(--text-primary)]">{p.title}</span>
-                <span className="block text-[11px] text-[var(--text-muted)]">{p.description}</span>
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-primary)]">
+                  <Sparkles size={11} className="flex-shrink-0 text-violet-300/70 transition-colors group-hover:text-violet-300" />
+                  <span className="flex-1 truncate">{p.title}</span>
+                  <ArrowUpRight size={12} className="flex-shrink-0 text-[var(--text-muted)] opacity-0 transition-all group-hover:text-violet-300 group-hover:opacity-100" />
+                </span>
+                <span className="mt-0.5 line-clamp-2 block text-[11px] leading-snug text-[var(--text-muted)]">{p.description}</span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      <div className="border-t border-[var(--border)] p-3">
-        <div className="flex items-end gap-2 rounded-xl px-3 py-2" style={{ background: 'var(--surface-sunken)' }}>
+      <div className="relative border-t border-[var(--border)] p-3">
+        <div className="relative rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 pb-2 pt-2.5 transition-all duration-200 focus-within:border-violet-400/45 focus-within:bg-white/[0.05] focus-within:shadow-[0_0_0_3px_rgba(139,92,246,0.12),0_0_30px_-8px_rgba(139,92,246,0.5)]">
           <textarea
             aria-label="Describe your workflow"
             value={input}
@@ -243,14 +267,26 @@ export default function ChatPanel({ onWorkflowGenerated, onClose }: ChatPanelPro
             onKeyDown={onKeyDown}
             placeholder="Describe your workflow…"
             disabled={isLoading}
-            rows={2}
-            className="flex-1 resize-none bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
+            rows={3}
+            className="block w-full resize-none bg-transparent text-[13px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none"
           />
-          <button onClick={() => handleSubmit()} disabled={!input.trim() || isLoading} className="btn-primary h-8 w-8 p-0" aria-label="Generate">
-            ↑
-          </button>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="hidden items-center gap-1 text-[10px] text-[var(--text-muted)] sm:flex">
+              <span className="kbd">Enter</span> to generate · <span className="kbd">Shift+Enter</span> newline
+            </span>
+            <button
+              onClick={() => handleSubmit()}
+              disabled={!input.trim() || isLoading}
+              className="btn-primary ml-auto h-7 gap-1 rounded-lg px-2.5 text-[11px]"
+              aria-label="Generate"
+              title="Generate"
+            >
+              {isLoading ? <Loader2 size={13} className="animate-spin" /> : <ArrowUp size={13} strokeWidth={2.5} />}
+              <span>Generate</span>
+            </button>
+          </div>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-[var(--text-muted)]">Generating replaces the canvas content (unsaved changes are lost).</p>
+        <p className="mt-2 text-center text-[10px] text-[var(--text-muted)]">Generating replaces the canvas content (unsaved changes are lost).</p>
       </div>
     </div>
   );
